@@ -1,0 +1,4 @@
+param/type error: false
+syntax error: false
+billing block: true
+message: Billing has not been enabled for this project. Enable billing at https://console.cloud.google.com/billing. DML queries are not allowed in the free tier. Set up a billing account to remove this restriction. at [2:7]

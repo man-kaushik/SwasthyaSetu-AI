@@ -1,0 +1,44 @@
+Loaded 120 PHC inventory records from seed file.
+
+BigQuery-first read test at http://127.0.0.1:56709
+
+Loaded 120 PHC inventory records from seed file.
+
+Recommendation/approval loop test at http://127.0.0.1:56713
+
+Loaded 120 PHC inventory records from seed file.
+
+BigQuery-outage fallback test at http://127.0.0.1:56716
+
+====================================================================
+PASS | GET /dashboard answers 200
+PASS | Dashboard reports inventory_source=bigquery
+PASS | Inventory rows come from current_inventory (3 BQ rows)
+PASS | BigQuery scalar wrappers unwrapped + numerics coerced
+PASS | PHC metadata (name/district/lat) served from BQ phcs table
+PASS | PHC directory size comes from BQ phcs table
+PASS | stockout_risk forecast merges into rows (2 rows scored by BQ ML)
+PASS | CRITICAL risk tier + forecast days flow through to the row
+PASS | Summary aggregates only BigQuery telemetry rows
+PASS | GET /meta serves BQ phcs with normalized keys (id, population_served)
+PASS | GET /meta serves BQ medicines with safetyStock + unit aliases
+PASS | GET /meta flags bigquery directory source
+PASS | GET /alerts serves BQ inventory tagged inventory_source=bigquery
+PASS | ACZ row surfaces a CRITICAL stock alert
+PASS | Directory queries cached for repeat calls (max 2 new queries: inventory + risk)
+PASS | POST /phcUpdate accepted while BigQuery is primary
+PASS | Updated stock (77) visible instantly even before BQ converges
+PASS | POST /recommendation answers 200 tagged with BQ inventory source
+PASS | Donor ranking uses BQ phcs directory (BQ PHC name on the donor)
+PASS | Recommendation row upserted into swasthya_ai.recommendations
+PASS | POST /approveTransfer persists both stock movements to BigQuery
+PASS | Approval re-upserts current_inventory for donor and recipient
+PASS | Approved transfer visible on the next BigQuery-sourced dashboard
+PASS | Dashboard PHC names still come from the BQ phcs table after writes
+PASS | Dashboard survives full BigQuery outage (200 + memory fallback)
+PASS | Outage is reported through data_source for the UI badge
+PASS | Meta survives outage and serves the local seed directory
+PASS | Alerts survive outage and still compute severities
+PASS | Health reports bigquery_configured with a surfaced error message
+====================================================================
+29/29 checks passed

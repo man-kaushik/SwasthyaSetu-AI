@@ -1,8 +1,12 @@
-const functions = require("firebase-functions");
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+try {
+  require("dotenv").config({ path: path.join(__dirname, ".env") });
+} catch (err) {
+  console.warn("dotenv unavailable:", err.message);
+}
 const admin = require("firebase-admin");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { BigQuery } = require("@google-cloud/bigquery");
@@ -17,11 +21,25 @@ if (!admin.apps.length) {
   }
 }
 
+// Initialize Firestore only when credentials can realistically exist:
+// Initialize Firestore only when credentials can realistically exist:
+//   - an explicit service-account key (GOOGLE_APPLICATION_CREDENTIALS)
+//   - Cloud Functions or Cloud Run runtime (ADC is attached automatically)
+//   - the Firebase Functions emulator
+// Without this guard, a bare GOOGLE_CLOUD_PROJECT in .env creates a client
+// whose reads stall while probing for default credentials (metadata server).
+const firestoreExplicitCreds = Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+const runningOnCloud = process.env.FUNCTIONS_EMULATOR === "true" ||
+  Boolean(process.env.GCP_PROJECT || process.env.CLOUD_FUNCTIONS_RUNTIME || process.env.K_SERVICE);
 let db = null;
-try {
-  db = admin.firestore();
-} catch (e) {
-  console.warn("Firestore client not initialized:", e.message);
+if (runningOnCloud || firestoreExplicitCreds) {
+  try {
+    db = admin.firestore();
+  } catch (e) {
+    console.warn("Firestore client not initialized:", e.message);
+  }
+} else {
+  console.warn("Firestore disabled (no credentials configured); using BigQuery / in-memory store.");
 }
 
 // ---------------------------------------------------------------------------
@@ -34,6 +52,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY 
 const BQ_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "";
 const BQ_DATASET = process.env.BQ_DATASET || "swasthya_ai";
 const BQ_LOCATION = process.env.BQ_LOCATION || "US";
+const BIGQUERY_TIMEOUT_MS = Number(process.env.BIGQUERY_TIMEOUT_MS) || 12000;
 
 // "gemini-1.5-flash" was retired; try current GA model ids in order of preference.
 const GEMINI_MODELS = [
@@ -157,8 +176,9 @@ function round1(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
 }
 
-function findPhc(phcId) {
-  return PHC_DIRECTORY.find(p => p.id === phcId) || {
+function findPhc(phcId, directory) {
+  const list = Array.isArray(directory) && directory.length > 0 ? directory : PHC_DIRECTORY;
+  return list.find(p => p.id === phcId) || {
     id: phcId,
     name: phcId,
     district: "Pune",
@@ -168,8 +188,9 @@ function findPhc(phcId) {
   };
 }
 
-function findMedicine(medicineId) {
-  return ESSENTIAL_MEDICINES.find(m => m.id === medicineId) || {
+function findMedicine(medicineId, directory) {
+  const list = Array.isArray(directory) && directory.length > 0 ? directory : ESSENTIAL_MEDICINES;
+  return list.find(m => m.id === medicineId) || {
     id: medicineId,
     name: medicineId,
     unit: "Units",
@@ -177,35 +198,263 @@ function findMedicine(medicineId) {
   };
 }
 
+async function loadDirectories() {
+  const [phcs, medicines] = await Promise.all([getPhcDirectory(), getMedicineDirectory()]);
+  return {
+    phcs: normalizeDirectoryRows(phcs && phcs.length > 0 ? phcs : PHC_DIRECTORY, "phc"),
+    medicines: normalizeDirectoryRows(medicines && medicines.length > 0 ? medicines : ESSENTIAL_MEDICINES, "medicine")
+  };
+}
+
 /**
- * Reads live inventory records.
- * Priority: Firestore (`current_inventory`) -> in-memory seed.
- * Records coming from POST /phcUpdate are merged in so an update made through
- * that endpoint is immediately visible to /dashboard and /alerts.
+ * Normalizes BigQuery's scalar wrappers (TIMESTAMP/DATE/INT64 can arrive as
+ * { value: "..." }) into plain JSON-safe primitives, and coerces the known
+ * numeric telemetry columns to real Numbers. NULL-safe for every row shape.
+ */
+function normalizeBigQueryRow(row) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(row || {})) {
+    normalized[key] = (value && typeof value === "object" && "value" in value)
+      ? value.value
+      : value;
+  }
+  for (const key of [
+    "lat", "lng", "population_served", "safety_stock", "standard_daily_consumption",
+    "current_stock", "daily_consumption", "beds_available", "doctors_present",
+    "nurses_present", "patient_footfall", "recommended_quantity", "distance_km",
+    "estimated_transit_hours", "donor_remaining_stock", "target_extended_days",
+    "forecast_daily_demand", "days_remaining", "expected_demand_14d",
+    "target_extended_days_int", "lower_bound", "upper_bound", "predicted_consumption",
+    "quantity"
+  ]) {
+    if (normalized[key] !== undefined && normalized[key] !== null && normalized[key] !== "") {
+      const numeric = Number(normalized[key]);
+      if (Number.isFinite(numeric)) normalized[key] = numeric;
+    }
+  }
+  return normalized;
+}
+
+function toBigQueryClientOptions(projectId) {
+  return projectId ? { projectId } : undefined;
+}
+
+function createBigQueryClient(projectId) {
+  return new BigQuery(toBigQueryClientOptions(projectId));
+}
+
+function withBigQueryTimeout(promise, label) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${BIGQUERY_TIMEOUT_MS}ms`)), BIGQUERY_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+const FIRESTORE_TIMEOUT_MS = Number(process.env.FIRESTORE_TIMEOUT_MS) || 4000;
+
+function withFirestoreTimeout(promise) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Firestore read timed out after ${FIRESTORE_TIMEOUT_MS}ms`)), FIRESTORE_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
+ * Lazy BigQuery client + one shared query helper. Never throws: on any failure
+ * it records the reason and returns null so every endpoint keeps working.
+ */
+let bigQueryError = "";
+async function runBigQuery(sql, params) {
+  if (!bigQueryConfigured()) {
+    bigQueryError = "BigQuery not configured (set GOOGLE_CLOUD_PROJECT or GOOGLE_APPLICATION_CREDENTIALS)";
+    return null;
+  }
+  try {
+    const projectId = resolveBigQueryProject();
+    if (!bigQueryClient) bigQueryClient = createBigQueryClient(projectId);
+    const [rows] = await withBigQueryTimeout(
+      bigQueryClient.query({ query: sql, params, location: BQ_LOCATION }),
+      "BigQuery query"
+    );
+    bigQueryError = "";
+    return Array.isArray(rows) ? rows.map(normalizeBigQueryRow) : [];
+  } catch (err) {
+    bigQueryError = err.message || String(err);
+    console.warn("BigQuery query skipped:", bigQueryError);
+    return null;
+  }
+}
+
+/**
+ * Reads live inventory records. BigQuery is now the primary source:
+ *   1. `swasthya_ai.current_inventory` via SELECT *
+ *   2. Firestore collection (when configured and reachable)
+ *   3. in-memory seed store
+ * Local session changes (POST /phcUpdate applied to memoryStore) overlay on top
+ * of BigQuery rows, so updates are visible instantly even while BigQuery's
+ * streaming buffer converges.
  */
 let firestoreHealthy = false;
+let inventorySource = "memory";
+let missingTableLogged = {};
+const pendingOverrides = new Map();
+const PENDING_OVERRIDE_TTL_MS = 15 * 60 * 1000;
+let phcDirectoryCache = { at: 0, rows: null };
+let medicineDirectoryCache = { at: 0, rows: null };
+const DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function directoryCacheFresh(cache) {
+  return Array.isArray(cache.rows) && Date.now() - cache.at < DIRECTORY_CACHE_TTL_MS;
+}
+
+function directoryRowsOrNull(rows) {
+  return Array.isArray(rows) && rows.length > 0 ? rows : null;
+}
+
+/**
+ * Directory reads, BigQuery-first with the same graceful ladder as inventory:
+ * `swasthya_ai.phcs` -> local seed -> [] (callers then apply their own
+ * PHC_DIRECTORY safety net). Medicines follow the identical pattern.
+ */
+async function getPhcDirectory() {
+  if (directoryCacheFresh(phcDirectoryCache)) return phcDirectoryCache.rows;
+  const projectId = resolveBigQueryProject();
+  const rows = projectId
+    ? await runBigQuery(`SELECT * FROM \`${projectId}.${BQ_DATASET}.phcs\` ORDER BY phc_id`)
+    : null;
+  const live = directoryRowsOrNull(rows);
+  if (live) {
+    phcDirectoryCache = { at: Date.now(), rows: live };
+    return live;
+  }
+  phcDirectoryCache = { at: Date.now(), rows: null };
+  return null;
+}
+
+async function getMedicineDirectory() {
+  if (directoryCacheFresh(medicineDirectoryCache)) return medicineDirectoryCache.rows;
+  const projectId = resolveBigQueryProject();
+  const rows = projectId
+    ? await runBigQuery(`SELECT * FROM \`${projectId}.${BQ_DATASET}.medicines\` ORDER BY medicine_id`)
+    : null;
+  const live = directoryRowsOrNull(rows);
+  if (live) {
+    medicineDirectoryCache = { at: Date.now(), rows: live };
+    return live;
+  }
+  medicineDirectoryCache = { at: Date.now(), rows: null };
+  return null;
+}
+
+function normalizeDirectoryRows(rows, kind) {
+  return (rows || []).map(row => {
+    const normalized = { ...(row || {}) };
+    if (kind === "phc") {
+      normalized.id = normalized.id || normalized.phc_id;
+      if (normalized.population !== undefined && normalized.population_served === undefined) {
+        normalized.population_served = normalized.population;
+      }
+    } else {
+      normalized.id = normalized.id || normalized.medicine_id;
+      normalized.name = normalized.name || normalized.medicine_name;
+      if (normalized.safety_stock !== undefined && normalized.safetyStock === undefined) {
+        normalized.safetyStock = normalized.safety_stock;
+      }
+      if (normalized.unit === undefined && normalized.units !== undefined) {
+        normalized.unit = normalized.units;
+      }
+    }
+    return normalized;
+  }).filter(entry => entry.id);
+}
+
+function pendingKeyFor(phcId, medicineId) {
+  return `${phcId}__${medicineId}`;
+}
+
+function trackPendingUpdate(payload) {
+  pendingOverrides.set(pendingKeyFor(payload.phc_id, payload.medicine_id), {
+    ...payload,
+    timestamp: new Date().toISOString()
+  });
+  for (const [key, value] of [...pendingOverrides.entries()]) {
+    if (Date.now() - new Date(value.timestamp).getTime() > PENDING_OVERRIDE_TTL_MS) {
+      pendingOverrides.delete(key);
+    }
+  }
+}
+
+function mergeSessionOverrides(records) {
+  if (pendingOverrides.size === 0) return records;
+  const merged = new Map(records.map(rec => [pendingKeyFor(rec.phc_id, rec.medicine_id), rec]));
+  for (const [key, override] of pendingOverrides.entries()) {
+    const prior = merged.get(key) || {};
+    merged.set(key, { ...prior, ...override });
+  }
+  return [...merged.values()];
+}
+
+function mergeUniqueByKey(lists) {
+  const merged = new Map();
+  for (const list of lists) {
+    for (const rec of list) {
+      if (rec && rec.phc_id && rec.medicine_id) {
+        merged.set(pendingKeyFor(rec.phc_id, rec.medicine_id), rec);
+      }
+    }
+  }
+  return [...merged.values()];
+}
 
 async function getInventoryRecords() {
-  let records = [];
-  if (db) {
-    try {
-      const snap = await db.collection("current_inventory").limit(500).get();
-      if (!snap.empty) records = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      firestoreHealthy = true;
-    } catch (err) {
-      firestoreHealthy = false;
-      console.warn("Firestore read fallback to memory:", err.message);
+  const projectId = resolveBigQueryProject();
+  let bigQueryRows = projectId
+    ? await runBigQuery(`SELECT * FROM \`${projectId}.${BQ_DATASET}.current_inventory\``)
+    : null;
+
+  if (bigQueryRows && !missingTableLogged.current_inventory) {
+    const keys = new Set();
+    for (const row of bigQueryRows) {
+      for (const key of Object.keys(row || {})) keys.add(key);
+    }
+    const expected = ["updated_at", "phc_id", "medicine_id", "medicine_name", "current_stock", "daily_consumption", "beds_available", "doctors_present", "nurses_present", "patient_footfall"];
+    const missing = expected.filter(key => !keys.has(key));
+    if (missing.length > 0) {
+      missingTableLogged.current_inventory = true;
+      console.warn(`BigQuery current_inventory is missing columns: ${missing.join(", ")}`);
     }
   }
 
-  const merged = new Map();
-  records.forEach(rec => merged.set(`${rec.phc_id}__${rec.medicine_id}`, rec));
-  memoryStore.inventory.forEach(rec => {
-    const key = `${rec.phc_id}__${rec.medicine_id}`;
-    if (!merged.has(key)) merged.set(key, rec);
-  });
+  let firestoreRows = [];
+  if (db) {
+    try {
+      const snap = await withFirestoreTimeout(db.collection("current_inventory").limit(500).get());
+      if (!snap.empty) firestoreRows = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      firestoreHealthy = true;
+    } catch (err) {
+      firestoreHealthy = false;
+      console.warn("Firestore read fallback:", err.message);
+    }
+  }
 
-  return [...merged.values()];
+  if (bigQueryRows && bigQueryRows.length > 0) {
+    inventorySource = "bigquery";
+    return mergeSessionOverrides(mergeUniqueByKey([bigQueryRows, firestoreRows]));
+  }
+  if (firestoreRows.length > 0) {
+    inventorySource = "firestore";
+    return mergeSessionOverrides(mergeUniqueByKey([firestoreRows]));
+  }
+  inventorySource = "memory";
+  return mergeSessionOverrides(mergeUniqueByKey([memoryStore.inventory]));
 }
 
 /**
@@ -374,6 +623,75 @@ async function insertTelemetryToBigQuery(payload) {
   }
 }
 
+/**
+ * Upserts one recommendation/proposal row into `swasthya_ai.recommendations`.
+ * Column list mirrors the live table exactly (13 columns).
+ * Never throws - returns { inserted, reason }.
+ */
+async function writeRecommendationToBigQuery(recommendation) {
+  if (!bigQueryConfigured()) {
+    return { inserted: false, reason: "BigQuery not configured" };
+  }
+  const projectId = resolveBigQueryProject();
+  if (!projectId) {
+    return { inserted: false, reason: "BigQuery project id could not be resolved" };
+  }
+  try {
+    if (!bigQueryClient) bigQueryClient = createBigQueryClient(projectId);
+    const columns = "(recommendation_id, alert_id, target_phc_id, donor_phc_id, medicine_id, medicine_name, " +
+      "recommended_quantity, distance_km, estimated_transit_hours, donor_remaining_stock, " +
+      "target_extended_days, status, created_at)";
+    const params = {
+      recommendation_id: recommendation.recommendation_id,
+      alert_id: null,
+      target_phc_id: recommendation.shortage_phc || recommendation.destination_phc_id || null,
+      donor_phc_id: recommendation.recommended_source || recommendation.source_phc_id || null,
+      medicine_id: recommendation.medicine_id,
+      medicine_name: recommendation.medicine,
+      recommended_quantity: Number(recommendation.recommended_transfer) || 0,
+      distance_km: Number(recommendation.distance_km) || 0,
+      estimated_transit_hours: Number(recommendation.estimated_transit_hours) || 0,
+      donor_remaining_stock: Number(recommendation.donor_remaining_stock) || 0,
+      target_extended_days: Number(recommendation.estimated_coverage_days) || 0,
+      status: recommendation.status || "PROPOSED",
+      created_at: recommendation.created_at || new Date().toISOString()
+    };
+    await bigQueryClient.query({
+      query: `
+        DELETE FROM \`${projectId}.${BQ_DATASET}.recommendations\`
+        WHERE recommendation_id = @recommendation_id;
+        INSERT INTO \`${projectId}.${BQ_DATASET}.recommendations\` ${columns}
+        VALUES (
+          @recommendation_id, @alert_id, @target_phc_id, @donor_phc_id, @medicine_id, @medicine_name,
+          @recommended_quantity, @distance_km, @estimated_transit_hours, @donor_remaining_stock,
+          @target_extended_days, @status, TIMESTAMP(@created_at)
+        );`,
+      params,
+      // BigQuery cannot infer the type of NULL parameters, so every parameter
+      // must be declared explicitly (matches the live table schema).
+      types: {
+        recommendation_id: "STRING",
+        alert_id: "STRING",
+        target_phc_id: "STRING",
+        donor_phc_id: "STRING",
+        medicine_id: "STRING",
+        medicine_name: "STRING",
+        recommended_quantity: "INT64",
+        distance_km: "FLOAT64",
+        estimated_transit_hours: "FLOAT64",
+        donor_remaining_stock: "INT64",
+        target_extended_days: "FLOAT64",
+        status: "STRING",
+        created_at: "STRING"
+      },
+      location: BQ_LOCATION
+    });
+    return { inserted: true, table: `${projectId}.${BQ_DATASET}.recommendations` };
+  } catch (err) {
+    return { inserted: false, reason: err.message || String(err) };
+  }
+}
+
 /** Calls Gemini, trying each configured model id until one responds. */
 async function askGemini(prompt) {
   if (!GEMINI_API_KEY) {
@@ -399,16 +717,41 @@ app.use(cors({ origin: true }));
 app.use(express.json());
 
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", app: "SwasthyaSetu AI API", version: "1.0.0" });
+  res.json({
+    status: "ok",
+    app: "SwasthyaSetu AI API",
+    version: "1.0.0",
+    data_source: {
+      bigquery_configured: bigQueryConfigured(),
+      inventory_source: inventorySource,
+      bigquery_error: bigQueryError || null,
+      firestore_configured: Boolean(db),
+      firestore_healthy: firestoreHealthy
+    }
+  });
 });
 
-app.get("/meta", (req, res) => {
-  res.json({ phcs: PHC_DIRECTORY, medicines: ESSENTIAL_MEDICINES });
+app.get("/meta", async (req, res) => {
+  try {
+    const directories = await loadDirectories();
+    res.json({
+      phcs: directories.phcs,
+      medicines: directories.medicines,
+      directory_source: {
+        bigquery: Boolean(directoryCacheFresh(phcDirectoryCache) || directoryCacheFresh(medicineDirectoryCache)),
+        legend: "bigquery indicates at least one directory table was served live from BigQuery"
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // GET /dashboard
 app.get("/dashboard", async (req, res) => {
   try {
+    const directories = await loadDirectories();
+    const phcs = directories.phcs;
     const records = await getInventoryRecords();
     const bqRisk = await getBigQueryRisk();
 
@@ -426,8 +769,8 @@ app.get("/dashboard", async (req, res) => {
       const stock = Number(item.current_stock) || 0;
       const daysRemaining = round1(stock / consumption);
 
-      const phcMeta = findPhc(item.phc_id);
-      const bq = bqRisk[`${item.phc_id}__${item.medicine_id}`] || null;
+      const phcMeta = findPhc(item.phc_id, phcs);
+      const bq = bqRisk[pendingKeyFor(item.phc_id, item.medicine_id)] || null;
 
       // Prefer the BigQuery ML forecast when the analytics table is available.
       let riskLevel = "STABLE";
@@ -469,8 +812,8 @@ app.get("/dashboard", async (req, res) => {
 
     res.json({
       summary: {
-        total_phcs_monitored: monitoredPhcs || PHC_DIRECTORY.length,
-        total_phc_directory: PHC_DIRECTORY.length,
+        total_phcs_monitored: monitoredPhcs || phcs.length,
+        total_phc_directory: phcs.length,
         total_medicine_records: enriched.length,
         critical_stockouts: criticalCount,
         potential_stockouts_7d: warningCount,
@@ -482,9 +825,11 @@ app.get("/dashboard", async (req, res) => {
         approved_transfers: memoryStore.transfers.length,
         records_scored_by_bigquery_ml: forecastDriven,
         data_source: {
+          bigquery: inventorySource === "bigquery",
           firestore: firestoreHealthy,
           bigquery_forecast: forecastDriven > 0,
-          memory_fallback: !firestoreHealthy
+          inventory_source: inventorySource,
+          memory_fallback: inventorySource === "memory"
         }
       },
       inventory: enriched
@@ -536,6 +881,7 @@ app.post("/phcUpdate", async (req, res) => {
     } else {
       memoryStore.inventory.unshift(payload);
     }
+    trackPendingUpdate(payload);
 
     let firestoreSaved = false;
     if (db) {
@@ -553,15 +899,27 @@ app.post("/phcUpdate", async (req, res) => {
     //    (+ best-effort append into `inventory_history` for the ML pipeline).
     const bigqueryResult = await insertTelemetryToBigQuery(payload);
 
+    const safetyStock = findMedicine(payload.medicine_id, (await loadDirectories()).medicines).safetyStock;
+
     const stores = [];
     if (firestoreSaved) stores.push("Firestore");
     if (bigqueryResult.inserted) stores.push(`BigQuery.${bigqueryResult.table || `${BQ_DATASET}.current_inventory`}`);
 
+    // Be explicit about *why* nothing durable was written, instead of implying
+    // no datastore was configured (e.g. BigQuery rejects writes when project
+    // billing is disabled, even though reads work fine).
+    let message;
+    if (stores.length > 0) {
+      message = `PHC update recorded in ${stores.join(" + ")}`;
+    } else if (bigQueryConfigured() || db) {
+      message = `PHC update kept in local session only; persistent write rejected (${bigqueryResult.reason || bigQueryError || "datastore permissions"})`;
+    } else {
+      message = "PHC update recorded in local session (no datastore configured)";
+    }
+
     res.status(200).json({
       success: true,
-      message: stores.length
-        ? `PHC update recorded in ${stores.join(" + ")}`
-        : "PHC update recorded in local session (no datastore configured)",
+      message,
       saved_to_firestore: firestoreSaved,
       bigquery_inserted: bigqueryResult.inserted,
       bigquery: bigqueryResult,
@@ -570,8 +928,8 @@ app.post("/phcUpdate", async (req, res) => {
         risk_level: payload.current_stock / (payload.daily_consumption || 1) <= 3
           ? "CRITICAL"
           : (payload.current_stock / (payload.daily_consumption || 1) <= 7 ? "WARNING" : "STABLE"),
-        safety_stock: findMedicine(payload.medicine_id).safetyStock,
-        below_safety_stock: payload.current_stock < findMedicine(payload.medicine_id).safetyStock
+        safety_stock: safetyStock,
+        below_safety_stock: payload.current_stock < safetyStock
       },
       record: payload
     });
@@ -583,6 +941,9 @@ app.post("/phcUpdate", async (req, res) => {
 // GET /alerts  (stock-out, bed-capacity and staffing alerts, ranked by severity)
 app.get("/alerts", async (req, res) => {
   try {
+    const directories = await loadDirectories();
+    const phcs = directories.phcs;
+    const medicines = directories.medicines;
     const records = await getInventoryRecords();
     const alerts = [];
     const severityRank = { CRITICAL: 0, HIGH: 1, WARNING: 2 };
@@ -591,8 +952,8 @@ app.get("/alerts", async (req, res) => {
       const consumption = Number(item.daily_consumption) || 1;
       const stock = Number(item.current_stock) || 0;
       const daysRemaining = round1(stock / consumption);
-      const phcMeta = findPhc(item.phc_id);
-      const medMeta = findMedicine(item.medicine_id);
+      const phcMeta = findPhc(item.phc_id, phcs);
+      const medMeta = findMedicine(item.medicine_id, medicines);
 
       if (daysRemaining <= 3) {
         alerts.push({
@@ -686,6 +1047,7 @@ app.get("/alerts", async (req, res) => {
 
     res.json({
       total_alerts: alerts.length,
+      inventory_source: inventorySource,
       by_severity: {
         CRITICAL: alerts.filter(a => a.severity === "CRITICAL").length,
         HIGH: alerts.filter(a => a.severity === "HIGH").length,
@@ -708,6 +1070,9 @@ app.get("/alerts", async (req, res) => {
 app.post("/recommendation", async (req, res) => {
   try {
     const { phc_id, medicine_id } = req.body || {};
+    const directories = await loadDirectories();
+    const phcs = directories.phcs;
+    const medicines = directories.medicines;
     const records = await getInventoryRecords();
 
     const target = records.find(
@@ -718,8 +1083,8 @@ app.post("/recommendation", async (req, res) => {
       return res.status(404).json({ error: "No inventory record found for recommendation" });
     }
 
-    const targetPhcMeta = findPhc(target.phc_id);
-    const medMeta = findMedicine(target.medicine_id);
+    const targetPhcMeta = findPhc(target.phc_id, phcs);
+    const medMeta = findMedicine(target.medicine_id, medicines);
 
     const targetDailyNeed = Number(target.daily_consumption) || 20;
     const deficitQuantity = Math.max(0, (targetDailyNeed * 10) - Number(target.current_stock));
@@ -727,8 +1092,8 @@ app.post("/recommendation", async (req, res) => {
     const donors = records
       .filter(item => item.medicine_id === target.medicine_id && item.phc_id !== target.phc_id)
       .map(item => {
-        const donorMeta = findPhc(item.phc_id);
-        const donorSafetyStock = (findMedicine(item.medicine_id).safetyStock) || medMeta.safetyStock;
+        const donorMeta = findPhc(item.phc_id, phcs);
+        const donorSafetyStock = (findMedicine(item.medicine_id, medicines).safetyStock) || medMeta.safetyStock;
         const surplus = Math.max(0, Number(item.current_stock) - donorSafetyStock);
         return {
           source_phc_id: item.phc_id,
@@ -756,7 +1121,8 @@ app.post("/recommendation", async (req, res) => {
         shortage_phc_name: targetPhcMeta.name,
         medicine_id: target.medicine_id,
         message: "No neighboring PHC currently has sufficient surplus above safety threshold. Direct district warehouse re-supply needed.",
-        evaluated_donors: 0
+        evaluated_donors: 0,
+        inventory_source: inventorySource
       });
     }
 
@@ -803,15 +1169,28 @@ app.post("/recommendation", async (req, res) => {
 
     // Persist the proposal so POST /approveTransfer can link back to it.
     memoryStore.recommendations.unshift(recommendation);
+    let firestoreSaved = false;
+    const recommendationWrites = [];
     if (db) {
-      try {
-        await db.collection("recommendations").doc(recommendation.recommendation_id).set(recommendation);
-      } catch (err) {
-        console.warn("Recommendation persist warning:", err.message);
-      }
+      recommendationWrites.push(
+        db.collection("recommendations").doc(recommendation.recommendation_id).set(recommendation)
+          .then(() => { firestoreSaved = true; })
+          .catch(err => console.warn("Recommendation persist warning:", err.message))
+      );
     }
+    recommendationWrites.push(
+      writeRecommendationToBigQuery(recommendation)
+        .catch(err => ({ inserted: false, reason: err.message }))
+    );
+    const recommendationWriteResults = await Promise.all(recommendationWrites);
+    const bigqueryWrite = recommendationWriteResults.find(r => r && typeof r.inserted === "boolean") || null;
 
-    res.json(recommendation);
+    res.json({
+      ...recommendation,
+      saved_to_firestore: firestoreSaved,
+      saved_to_bigquery: Boolean(bigqueryWrite && bigqueryWrite.inserted),
+      inventory_source: inventorySource
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -837,8 +1216,9 @@ app.post("/approveTransfer", async (req, res) => {
       });
     }
 
-    const sourceMeta = findPhc(sourcePhcId);
-    const destinationMeta = findPhc(destinationPhcId);
+    const directories = await loadDirectories();
+    const sourceMeta = findPhc(sourcePhcId, directories.phcs);
+    const destinationMeta = findPhc(destinationPhcId, directories.phcs);
     const quantityFinal = Number.isFinite(quantity) && quantity > 0 ? quantity : 100;
 
     const transferRecord = {
@@ -860,9 +1240,44 @@ app.post("/approveTransfer", async (req, res) => {
       timestamp: new Date().toISOString()
     };
 
-    // 1. Move stock in the in-memory working set.
-    const sourceRec = memoryStore.inventory.find(i => i.phc_id === sourcePhcId && i.medicine_id === medicineId);
-    const destRec = memoryStore.inventory.find(i => i.phc_id === destinationPhcId && i.medicine_id === medicineId);
+    // 1. Resolve both sides from the live ladder (BigQuery -> Firestore ->
+    //    memory), because memoryStore alone does not contain BigQuery rows.
+    const liveRecords = await getInventoryRecords();
+    const findLive = (phcId) => liveRecords.find(i => i.phc_id === phcId && i.medicine_id === medicineId);
+
+    const upsertWorkingRecord = (base) => {
+      const record = { ...base };
+      const idx = memoryStore.inventory.findIndex(
+        i => i.phc_id === record.phc_id && i.medicine_id === record.medicine_id
+      );
+      if (idx >= 0) memoryStore.inventory[idx] = { ...memoryStore.inventory[idx], ...record };
+      else memoryStore.inventory.unshift(record);
+      return record;
+    };
+
+    const buildSide = (phcId) => {
+      const live = findLive(phcId);
+      if (live) return upsertWorkingRecord(live);
+      // Only invent a zero-stock row when there is a real row somewhere upstream;
+      // unknown facilities stay null so the caller reports "no record moved".
+      const existsSomewhere = liveRecords.some(i => i.phc_id === phcId) || Boolean(memoryStore.inventory.find(i => i.phc_id === phcId));
+      if (!existsSomewhere) return null;
+      const medMeta = findMedicine(medicineId, directories.medicines);
+      return upsertWorkingRecord({
+        phc_id: phcId,
+        medicine_id: medicineId,
+        medicine_name: medMeta.name || medicineId,
+        current_stock: 0,
+        daily_consumption: 0,
+        beds_available: 0,
+        doctors_present: 0,
+        nurses_present: 0,
+        patient_footfall: 0
+      });
+    };
+
+    const sourceRec = buildSide(sourcePhcId);
+    const destRec = buildSide(destinationPhcId);
 
     const sourceBefore = sourceRec ? Number(sourceRec.current_stock) || 0 : null;
     const destBefore = destRec ? Number(destRec.current_stock) || 0 : null;
@@ -870,9 +1285,22 @@ app.post("/approveTransfer", async (req, res) => {
     if (sourceRec) sourceRec.current_stock = Math.max(0, (Number(sourceRec.current_stock) || 0) - quantityFinal);
     if (destRec) destRec.current_stock = (Number(destRec.current_stock) || 0) + quantityFinal;
 
+    // Session overlay so BigQuery-sourced dashboards show the move instantly.
+    if (sourceRec) trackPendingUpdate(sourceRec);
+    if (destRec) trackPendingUpdate(destRec);
+
     memoryStore.transfers.unshift(transferRecord);
 
-    // 2. Persist to Firestore (dispatch log + adjusted stock balances).
+    // 2. Persist to BigQuery: new snapshot for both facilities. The session
+    //    overlay is intentionally kept (15m TTL) until BigQuery's streaming
+    //    buffer converges, mirroring POST /phcUpdate behaviour.
+    const bigqueryResults = await Promise.all([
+      sourceRec ? insertTelemetryToBigQuery(sourceRec).catch(err => ({ inserted: false, reason: err.message })) : Promise.resolve(null),
+      destRec ? insertTelemetryToBigQuery(destRec).catch(err => ({ inserted: false, reason: err.message })) : Promise.resolve(null)
+    ]);
+    const bigquerySaved = bigqueryResults.filter(Boolean).some(r => r && r.inserted);
+
+    // 3. Persist to Firestore (dispatch log + adjusted stock balances).
     let firestoreSaved = false;
     if (db) {
       try {
@@ -899,6 +1327,8 @@ app.post("/approveTransfer", async (req, res) => {
       success: true,
       message: "Transfer order approved and dispatched into state logistics network.",
       saved_to_firestore: firestoreSaved,
+      saved_to_bigquery: bigquerySaved,
+      inventory_source: inventorySource,
       stock_movement: {
         source_phc_id: sourcePhcId,
         destination_phc_id: destinationPhcId,
@@ -1087,6 +1517,5 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
-exports.api = functions.https.onRequest(app);
 exports.app = app;
 

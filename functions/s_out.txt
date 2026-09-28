@@ -1,0 +1,22 @@
+Loaded 120 PHC inventory records from seed file.
+=================================================
+ SwasthyaSetu AI API Server
+ Local:  http://localhost:8080
+ Index:  http://localhost:8080/
+-------------------------------------------------
+ Endpoints:
+   GET    /health
+   GET    /meta
+   GET    /dashboard
+   POST   /phcUpdate
+   GET    /alerts
+   POST   /recommendation
+   POST   /approveTransfer
+   POST   /explainAlert
+   POST   /translate
+-------------------------------------------------
+ Optional integrations (graceful fallback without them):
+   GEMINI_API_KEY          -> Gemini briefings + AI translation
+   GOOGLE_CLOUD_PROJECT    -> BigQuery forecast + Cloud Translation
+   GOOGLE_APPLICATION_CREDENTIALS -> Firestore persistence
+=================================================

@@ -1,0 +1,8 @@
+◇ injected env (2) from .env
+Firestore save warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore save warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+BigQuery query skipped: simulated DML permission error
+BigQuery query skipped: simulated DML permission error
+Firestore save warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+BigQuery query skipped: simulated DML permission error
+BigQuery query skipped: simulated DML permission error

@@ -2,6 +2,50 @@ import { db } from "../firebase";
 import { collection, doc, setDoc, addDoc } from "firebase/firestore";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
+let dashboardRequestSequence = 0;
+
+export async function getDashboardData() {
+  if (APPS_SCRIPT_URL) {
+    return new Promise((resolve, reject) => {
+      const callbackName = `__swasthyaSetuDashboard_${Date.now()}_${dashboardRequestSequence++}`;
+      const script = document.createElement("script");
+      const endpoint = new URL(APPS_SCRIPT_URL);
+      let timeoutId;
+      const cleanup = () => {
+        delete window[callbackName];
+        script.remove();
+        clearTimeout(timeoutId);
+      };
+
+      window[callbackName] = (data) => {
+        cleanup();
+        if (data?.error) reject(new Error(data.error));
+        else resolve(data);
+      };
+      endpoint.searchParams.set("callback", callbackName);
+      script.src = endpoint.toString();
+      script.async = true;
+      script.onerror = () => {
+        cleanup();
+        reject(new Error("Could not reach the Apps Script dashboard service."));
+      };
+      timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error("Apps Script dashboard request timed out."));
+      }, 30000);
+      document.head.appendChild(script);
+    });
+  }
+
+  if (API_BASE_URL) {
+    const response = await fetch(`${API_BASE_URL}/dashboard`);
+    if (!response.ok) throw new Error(`Dashboard request failed (HTTP ${response.status})`);
+    return response.json();
+  }
+
+  throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
+}
 
 // Default in-memory metadata for instant UI rendering
 export const SAMPLE_PHCS = [

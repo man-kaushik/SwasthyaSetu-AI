@@ -1,0 +1,16 @@
+.git/
+node_modules/
+.env
+.env.*
+*.local
+*.log
+*service-account*.json
+*_key.json
+smoke_test.js
+test_*.js
+bq_probe.js
+dbg_sql.js
+q*.txt
+r*.txt
+s*.txt
+sql_*.txt

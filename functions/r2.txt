@@ -1,0 +1,28 @@
+Loaded 120 PHC inventory records from seed file.
+
+PHC update -> BigQuery write test at http://127.0.0.1:56705
+
+---------------------------------------------------------------
+PASS  POST /phcUpdate returns 200 with bigquery_inserted=true  [{"inserted":true,"history_inserted":true,"project":"test-project","dataset":"swasthya_ai","table":"test-project.swasthya_ai.current_inventory"}]
+PASS  Reports target table as project.dataset.table  [test-project.swasthya_ai.current_inventory]
+PASS  Snapshot write is an UPSERT (DELETE then INSERT on the same key)  [delete+insert captured]
+PASS  UPSERT targets swasthya_ai.current_inventory  [table name ok]
+PASS  UPSERT column list matches the BigQuery table schema  [10 columns expected]
+PASS  UPSERT named params match the sample request payload  [stock=40, consumption=22, beds=3]
+PASS  UPSERT sends only params that exist in the SQL  [updated_at,phc_id,medicine_id,medicine_name,current_stock,daily_consumption,beds_available,doctors_present,nurses_present,patient_footfall]
+PASS  UPSERT runs in the dataset location (US)  [US]
+PASS  History row appended for the ML training table  [inventory_history insert captured]
+PASS  History params match its placeholders exactly  [phc_id,medicine_id,medicine_name,daily_consumption,current_stock,patient_footfall]
+PASS  History insert uses CURRENT_DATE()  [CURRENT_DATE()]
+PASS  Response carries success + firestore status keys  [saved_to_firestore=false]
+PASS  Response carries live risk preview (1.8 days, CRITICAL)  [{"days_remaining":1.8,"risk_level":"CRITICAL","safety_stock":100,"below_safety_stock":true}]
+PASS  Persistence message names the stores it wrote to  [PHC update recorded in BigQuery.test-project.swasthya_ai.current_inventory]
+PASS  When DML is denied the endpoint falls back to a streaming insert  [mode=stream_insert]
+PASS  Streaming insert targets the current_inventory table  [swasthya_ai.current_inventory]
+PASS  Streaming insert carries the submitted values  [stock=35]
+PASS  When both writes are denied the endpoint still returns 200  [status 200]
+PASS  ...and reports bigquery_inserted=false with a reason  [simulated DML permission error | fallback: simulated streaming insert error]
+---------------------------------------------------------------
+Result: 19/19 checks passed.
+POST /phcUpdate -> BigQuery write path verified.
+
