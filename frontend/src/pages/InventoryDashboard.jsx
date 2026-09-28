@@ -9,6 +9,7 @@ function InventoryDashboard() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -38,6 +39,9 @@ function InventoryDashboard() {
       .includes(query.toLowerCase())
   );
   const source = summary.data_source?.inventory_source || "unavailable";
+  const pageCount = Math.max(1, Math.ceil(filteredInventory.length / 50));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleInventory = filteredInventory.slice(currentPage * 50, (currentPage + 1) * 50);
 
   return (
     <main className="dashboard">
@@ -99,7 +103,7 @@ function InventoryDashboard() {
             <input
               type="search"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => { setQuery(event.target.value); setPage(0); }}
               placeholder="Facility or medicine"
             />
           </label>
@@ -120,7 +124,7 @@ function InventoryDashboard() {
             <tbody>
               {loading && !dashboard ? (
                 <tr><td className="table-message" colSpan="7">Loading inventory from BigQuery...</td></tr>
-              ) : filteredInventory.length ? filteredInventory.map((row, index) => (
+              ) : visibleInventory.length ? visibleInventory.map((row, index) => (
                 <tr key={`${row.phc_id}-${row.medicine_id}-${index}`}>
                   <td>
                     <span className="facility-name">{row.phc_name || row.phc_id}</span>
@@ -136,7 +140,7 @@ function InventoryDashboard() {
                   <td className="numeric-cell">{number(row.beds_available)}</td>
                   <td><span className={`risk-tag risk-${String(row.risk_level || "stable").toLowerCase()}`}>{row.risk_level || "STABLE"}</span></td>
                 </tr>
-              )) : (
+                )) : (
                 <tr><td className="table-message" colSpan="7">{error ? "Inventory could not be loaded." : "No matching inventory records."}</td></tr>
               )}
             </tbody>
@@ -145,6 +149,11 @@ function InventoryDashboard() {
         <div className="table-footer">
           <span>Source table: <code>swasthya_ai.current_inventory</code></span>
           <span>{number(summary.doctors_on_duty)} doctors · {number(summary.patient_footfall_today)} visits today</span>
+          <div className="table-pagination" aria-label="Inventory pagination">
+            <button type="button" className="pagination-button" onClick={() => setPage(Math.max(0, currentPage - 1))} disabled={currentPage === 0}>Previous</button>
+            <span>{filteredInventory.length ? `Page ${currentPage + 1} of ${pageCount}` : "Page 0 of 0"}</span>
+            <button type="button" className="pagination-button" onClick={() => setPage(Math.min(pageCount - 1, currentPage + 1))} disabled={currentPage >= pageCount - 1}>Next</button>
+          </div>
         </div>
       </section>
     </main>

@@ -17,6 +17,7 @@ function AlertsPage() {
   const [districtFilter, setDistrictFilter] = useState("all");
   const [riskFilter, setRiskFilter] = useState("action");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -49,6 +50,9 @@ function AlertsPage() {
       .toLowerCase().includes(search.toLowerCase()))
     .sort((left, right) => riskRank[left.risk_level] - riskRank[right.risk_level] ||
       (left.days_remaining ?? Infinity) - (right.days_remaining ?? Infinity));
+  const pageCount = Math.max(1, Math.ceil(filteredAlerts.length / 50));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleAlerts = filteredAlerts.slice(currentPage * 50, (currentPage + 1) * 50);
 
   const critical = alerts.filter((row) => row.risk_level === "CRITICAL").length;
   const warning = alerts.filter((row) => row.risk_level === "WARNING").length;
@@ -86,16 +90,16 @@ function AlertsPage() {
             <p>{format(filteredAlerts.length)} records</p>
           </div>
           <div className="alert-filters">
-            <label><span>State</span><select value={stateFilter} onChange={(event) => { setStateFilter(event.target.value); setDistrictFilter("all"); }}>
+            <label><span>State</span><select value={stateFilter} onChange={(event) => { setStateFilter(event.target.value); setDistrictFilter("all"); setPage(0); }}>
               <option value="all">All states</option>{states.map((state) => <option key={state} value={state}>{state}</option>)}
             </select></label>
-            <label><span>District</span><select value={districtFilter} onChange={(event) => setDistrictFilter(event.target.value)}>
+            <label><span>District</span><select value={districtFilter} onChange={(event) => { setDistrictFilter(event.target.value); setPage(0); }}>
               <option value="all">All districts</option>{districts.map((district) => <option key={district} value={district}>{district}</option>)}
             </select></label>
-            <label><span>Risk</span><select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value)}>
+            <label><span>Risk</span><select value={riskFilter} onChange={(event) => { setRiskFilter(event.target.value); setPage(0); }}>
               <option value="action">Needs attention</option><option value="all">All levels</option>
             </select></label>
-            <label className="alert-search"><span>Search</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Facility or medicine" /></label>
+            <label className="alert-search"><span>Search</span><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Facility or medicine" /></label>
           </div>
         </div>
 
@@ -104,7 +108,7 @@ function AlertsPage() {
             <thead><tr><th>Facility</th><th>Area</th><th>Medicine</th><th>Stock</th><th>Forecast / day</th><th>Days remaining</th><th>Risk</th></tr></thead>
             <tbody>
               {loading && !alerts.length ? <tr><td colSpan="7" className="alerts-empty">Loading forecast-based alerts...</td></tr> :
-                filteredAlerts.length ? filteredAlerts.map((row) => (
+                visibleAlerts.length ? visibleAlerts.map((row) => (
                   <tr key={`${row.phc_id}-${row.medicine_id}`}>
                     <td><strong>{row.phc_name || row.phc_id}</strong><small>{row.phc_id}</small></td>
                     <td><strong>{row.district || "—"}</strong><small>{row.state || "—"}</small></td>
@@ -120,6 +124,11 @@ function AlertsPage() {
         </div>
         <div className="alerts-table-footer">
           <span>Demand source: average forecast for the next 7 days</span>
+          <div className="alerts-pagination" aria-label="Alerts pagination">
+            <button type="button" className="pagination-button" onClick={() => setPage(Math.max(0, currentPage - 1))} disabled={currentPage === 0}>Previous</button>
+            <span>{filteredAlerts.length ? `Page ${currentPage + 1} of ${pageCount}` : "Page 0 of 0"}</span>
+            <button type="button" className="pagination-button" onClick={() => setPage(Math.min(pageCount - 1, currentPage + 1))} disabled={currentPage >= pageCount - 1}>Next</button>
+          </div>
           <span>Risk order: critical, warning, stable</span>
         </div>
       </section>
