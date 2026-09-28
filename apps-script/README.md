@@ -20,7 +20,9 @@ It does not provide the Express write, transfer, Gemini, or Translation routes.
 
 7. From the repository root, build and deploy Hosting:
 7. Test the alerts response directly at `YOUR_WEB_APP_URL/exec?route=alerts`. It returns a JSON array ordered `CRITICAL`, `WARNING`, then `STABLE`.
-8. From the repository root, build and deploy Hosting:
+7. Run [`bigquery/seed_sql/05_seed_forecast_results.sql`](../bigquery/seed_sql/05_seed_forecast_results.sql) in BigQuery to create demo forecasts from the current inventory snapshot.
+8. To publish the Apps Script alerts route, replace `Code.gs` with the repository version, then select **Deploy > Manage deployments > Edit > New version > Deploy**. Verify `YOUR_WEB_APP_URL/exec?route=alerts` returns an array ordered `CRITICAL`, `WARNING`, then `STABLE`.
+9. From the repository root, build and deploy Hosting:
 
    ```powershell
    npm --prefix frontend run build
