@@ -1,18 +1,27 @@
 -- ============================================================================
--- SwasthyaSetu AI: BigQuery Schema and DDL Definitions
+-- SwasthyaSetu AI: BigQuery Setup Script (Clean Recreate & Table Definitions)
 -- Dataset: swasthya_ai
 --
--- NOTE: In BigQuery, CSV imports and "Auto detect" create columns as NULLABLE.
--- Defining columns as NULLABLE (without "NOT NULL") prevents the error:
--- "Field ... has changed mode from REQUIRED to NULLABLE"
+-- Why DROP TABLE?
+-- Tables previously created with `NOT NULL` (REQUIRED mode) will reject CSV data
+-- because CSV imports default all columns to NULLABLE.
+-- Running this script drops the old tables with REQUIRED columns and recreates
+-- them with NULLABLE columns so CSV loads work immediately without error.
 -- ============================================================================
 
--- 1. Create Dataset
 CREATE SCHEMA IF NOT EXISTS `swasthya_ai`
 OPTIONS (
   location = 'US',
   description = 'SwasthyaSetu AI healthcare resource allocation, demand forecasting and redistribution dataset'
 );
+
+DROP TABLE IF EXISTS `swasthya_ai.phcs`;
+DROP TABLE IF EXISTS `swasthya_ai.medicines`;
+DROP TABLE IF EXISTS `swasthya_ai.inventory_history`;
+DROP TABLE IF EXISTS `swasthya_ai.current_inventory`;
+DROP TABLE IF EXISTS `swasthya_ai.forecast_results`;
+DROP TABLE IF EXISTS `swasthya_ai.alerts`;
+DROP TABLE IF EXISTS `swasthya_ai.recommendations`;
 
 -- 2. Table: phcs (Primary Health Centres directory)
 CREATE TABLE IF NOT EXISTS `swasthya_ai.phcs` (
