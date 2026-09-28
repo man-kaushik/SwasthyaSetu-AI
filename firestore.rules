@@ -1,0 +1,10 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Primary Health Centre telemetry & supply chain records
+    match /{document=**} {
+      allow read, write: if true; // Configure auth rules before production
+    }
+  }
+}
