@@ -72,16 +72,22 @@ CREATE TABLE IF NOT EXISTS `swasthya_ai.current_inventory` (
 )
 CLUSTER BY phc_id, medicine_id;
 
--- 6. Table: forecast_results (Predictive BigQuery ML / Vertex AI projections)
+-- 6. Table: forecast_results (14-day demand forecasts)
+-- IMPORTANT: this is the EXACT spec produced by
+--   bigquery/queries/03_build_forecast_results.sql  (BigQuery ML ARIMA_PLUS path)
+--   bigquery/queries/03b_forecast_fallback.sql      (moving-average fallback)
+-- NOTE: If a table with a different partitioning spec already exists, BigQuery
+-- refuses CREATE OR REPLACE with "Cannot replace a table with a different
+-- partitioning spec". The pipeline queries therefore DROP this table first, so
+-- it is also safe to skip this DDL and let STEP 3 create the table.
 CREATE TABLE IF NOT EXISTS `swasthya_ai.forecast_results` (
-  phc_id STRING,
-  medicine_id STRING,
-  forecast_date DATE,
-  predicted_consumption FLOAT64,
-  lower_bound FLOAT64,
-  upper_bound FLOAT64,
-  projected_stockout_date DATE,
-  days_until_stockout FLOAT64,
+  phc_medicine_id STRING OPTIONS(description="Composite key: PHC_ID + '_' + MEDICINE_ID"),
+  phc_id STRING OPTIONS(description="Facility ID parsed out of phc_medicine_id"),
+  medicine_id STRING OPTIONS(description="Medicine ID parsed out of phc_medicine_id"),
+  forecast_date DATE OPTIONS(description="Forecast day"),
+  forecast_value FLOAT64 OPTIONS(description="Predicted daily consumption"),
+  prediction_interval_lower_bound FLOAT64 OPTIONS(description="95% interval lower bound"),
+  prediction_interval_upper_bound FLOAT64 OPTIONS(description="95% interval upper bound"),
   created_at TIMESTAMP OPTIONS(description="Model inference timestamp")
 )
 PARTITION BY forecast_date
