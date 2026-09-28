@@ -1,9 +1,15 @@
 -- ============================================================================
 -- SwasthyaSetu AI: Step 2 - Generate 14-Day Demand Forecast via ML.FORECAST
 -- Stores confidence intervals (lower/upper bound) & splits ID into phc_id, medicine_id
+-- Uses DROP TABLE first to avoid partitioning spec conflict.
 -- ============================================================================
 
-CREATE OR REPLACE TABLE `swasthya_ai.forecast_results` AS
+DROP TABLE IF EXISTS `swasthya_ai.forecast_results`;
+
+CREATE TABLE `swasthya_ai.forecast_results`
+PARTITION BY forecast_date
+CLUSTER BY phc_id, medicine_id
+AS
 SELECT
   SPLIT(phc_medicine_id, '_')[OFFSET(0)] AS phc_id,
   SPLIT(phc_medicine_id, '_')[OFFSET(1)] AS medicine_id,
@@ -20,3 +26,4 @@ FROM ML.FORECAST(
     0.95 AS confidence_level
   )
 );
+

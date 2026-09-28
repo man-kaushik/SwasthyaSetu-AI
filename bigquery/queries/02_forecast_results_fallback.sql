@@ -4,7 +4,12 @@
 -- Projects average daily consumption for the upcoming 14 days per PHC + Medicine.
 -- ============================================================================
 
-CREATE OR REPLACE TABLE `swasthya_ai.forecast_results` AS
+DROP TABLE IF EXISTS `swasthya_ai.forecast_results`;
+
+CREATE TABLE `swasthya_ai.forecast_results`
+PARTITION BY forecast_date
+CLUSTER BY phc_id, medicine_id
+AS
 WITH recent_moving_avg AS (
   SELECT
     phc_id,
@@ -27,3 +32,4 @@ SELECT
   CURRENT_TIMESTAMP() AS created_at
 FROM recent_moving_avg r
 CROSS JOIN UNNEST(GENERATE_ARRAY(1, 14)) AS day_offset;
+
