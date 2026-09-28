@@ -7,7 +7,7 @@ It does not provide the Express write, transfer, Gemini, or Translation routes.
 
 ## Deploy
 
-1. Open [script.google.com](https://script.google.com/) and create a standalone project.
+1. Open [script.google.com](https://script.google.com/) and open the existing dashboard script project.
 2. In Project Settings, enable **Show `appsscript.json` manifest file**. Replace the generated `Code.gs` and manifest with the files in this folder.
 3. In the Apps Script project settings, link the standard Google Cloud project `swasthyasetu-ai-7b4e6`. Enable the BigQuery API for that project.
 4. Ensure the Google account deploying the script can create BigQuery jobs in `swasthyasetu-ai-7b4e6` (`roles/bigquery.jobUser`) and read the `swasthya_ai` dataset (`roles/bigquery.dataViewer`). Authorize the requested BigQuery read-only scope when prompted.
@@ -19,6 +19,8 @@ It does not provide the Express write, transfer, Gemini, or Translation routes.
    ```
 
 7. From the repository root, build and deploy Hosting:
+7. Test the alerts response directly at `YOUR_WEB_APP_URL/exec?route=alerts`. It returns a JSON array ordered `CRITICAL`, `WARNING`, then `STABLE`.
+8. From the repository root, build and deploy Hosting:
 
    ```powershell
    npm --prefix frontend run build

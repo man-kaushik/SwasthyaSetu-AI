@@ -5,43 +5,83 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
 let dashboardRequestSequence = 0;
 
-export async function getDashboardData() {
-  if (APPS_SCRIPT_URL) {
-    return new Promise((resolve, reject) => {
-      const callbackName = `__swasthyaSetuDashboard_${Date.now()}_${dashboardRequestSequence++}`;
-      const script = document.createElement("script");
-      const endpoint = new URL(APPS_SCRIPT_URL);
-      let timeoutId;
-      const cleanup = () => {
-        delete window[callbackName];
-        script.remove();
-        clearTimeout(timeoutId);
-      };
+function requestAppsScript(route) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `__swasthyaSetuDashboard_${Date.now()}_${dashboardRequestSequence++}`;
+    const script = document.createElement("script");
+    const endpoint = new URL(APPS_SCRIPT_URL);
+    let timeoutId;
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+      clearTimeout(timeoutId);
+    };
 
-      window[callbackName] = (data) => {
-        cleanup();
-        if (data?.error) reject(new Error(data.error));
-        else resolve(data);
-      };
-      endpoint.searchParams.set("callback", callbackName);
-      script.src = endpoint.toString();
-      script.async = true;
-      script.onerror = () => {
-        cleanup();
-        reject(new Error("Could not reach the Apps Script dashboard service."));
-      };
-      timeoutId = setTimeout(() => {
-        cleanup();
-        reject(new Error("Apps Script dashboard request timed out."));
-      }, 30000);
-      document.head.appendChild(script);
-    });
-  }
+    window[callbackName] = (data) => {
+      cleanup();
+      if (data?.error) reject(new Error(data.error));
+      else resolve(data);
+    };
+    if (route) endpoint.searchParams.set("route", route);
+    endpoint.searchParams.set("callback", callbackName);
+    script.src = endpoint.toString();
+    script.async = true;
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Could not reach the Apps Script dashboard service."));
+    };
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error("Apps Script dashboard request timed out."));
+    }, 30000);
+    document.head.appendChild(script);
+  });
+}
+
+export async function getDashboardData() {
+  if (APPS_SCRIPT_URL) return requestAppsScript("");
 
   if (API_BASE_URL) {
     const response = await fetch(`${API_BASE_URL}/dashboard`);
     if (!response.ok) throw new Error(`Dashboard request failed (HTTP ${response.status})`);
     return response.json();
+  }
+
+  throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
+}
+
+export async function getAlertsData() {
+  if (APPS_SCRIPT_URL) {
+    const response = await requestAppsScript("alerts");
+    if (Array.isArray(response)) return response;
+    if (!Array.isArray(response?.inventory)) throw new Error("The alerts route returned an unexpected response.");
+
+    const riskOrder = { CRITICAL: 0, WARNING: 1, STABLE: 2 };
+    return response.inventory.map((row) => {
+      const predictedDemand = Number(row.predicted_daily_demand ?? row.forecast_daily_demand ?? row.daily_consumption) || 0;
+      const daysRemaining = predictedDemand > 0
+        ? Math.round((Number(row.current_stock || 0) / predictedDemand) * 100) / 100
+        : null;
+      return {
+        phc_id: row.phc_id,
+        phc_name: row.phc_name,
+        state: row.state,
+        district: row.district,
+        medicine_id: row.medicine_id,
+        medicine_name: row.medicine_name,
+        current_stock: Number(row.current_stock) || 0,
+        predicted_daily_demand: predictedDemand,
+        days_remaining: daysRemaining,
+        risk_level: daysRemaining === null || daysRemaining > 7 ? "STABLE" : daysRemaining <= 3 ? "CRITICAL" : "WARNING"
+      };
+    }).sort((left, right) => riskOrder[left.risk_level] - riskOrder[right.risk_level]);
+  }
+
+  if (API_BASE_URL) {
+    const response = await fetch(`${API_BASE_URL}/alerts`);
+    if (!response.ok) throw new Error(`Alerts request failed (HTTP ${response.status})`);
+    const data = await response.json();
+    return Array.isArray(data) ? data : data.alerts || [];
   }
 
   throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");

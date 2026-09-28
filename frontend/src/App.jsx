@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import PHCUpdatePage from './pages/PHCUpdatePage';
 import InventoryDashboard from './pages/InventoryDashboard';
+import AlertsPage from './pages/AlertsPage';
 
 const theme = createTheme({
   palette: {
@@ -61,6 +62,12 @@ function App() {
                 Overview
               </Button>
               <Button
+                onClick={() => setCurrentView('alerts')}
+                sx={{ color: 'white', bgcolor: currentView === 'alerts' ? 'rgba(255,255,255,0.2)' : 'transparent', fontWeight: 600 }}
+              >
+                Alerts
+              </Button>
+              <Button
                 variant="outlined"
                 onClick={() => setCurrentView('phc-update')}
                 sx={{ borderColor: 'rgba(255,255,255,0.7)', bgcolor: currentView === 'phc-update' ? 'white' : 'transparent', color: currentView === 'phc-update' ? '#0369a1' : 'white', fontWeight: 700 }}
@@ -71,7 +78,7 @@ function App() {
           </Toolbar>
         </AppBar>
 
-        {currentView === 'phc-update' ? <PHCUpdatePage /> : <InventoryDashboard />}
+          {currentView === 'phc-update' ? <PHCUpdatePage /> : currentView === 'alerts' ? <AlertsPage /> : <InventoryDashboard />}
 
         <Box component="footer" sx={{ py: 3, px: 2, mt: 'auto', backgroundColor: '#f1f5f9', borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

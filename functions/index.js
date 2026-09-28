@@ -482,6 +482,26 @@ async function getBigQueryRisk() {
   }
 }
 
+async function getSevenDayForecastDemand() {
+  const projectId = resolveBigQueryProject();
+  if (!projectId) return new Map();
+
+  const rows = await runBigQuery(`
+    SELECT
+      phc_id,
+      medicine_id,
+      AVG(forecast_value) AS predicted_daily_demand
+    FROM \`${projectId}.${BQ_DATASET}.forecast_results\`
+    WHERE forecast_date >= CURRENT_DATE()
+      AND forecast_date < DATE_ADD(CURRENT_DATE(), INTERVAL 7 DAY)
+    GROUP BY phc_id, medicine_id`);
+
+  return new Map((rows || []).map(row => [
+    pendingKeyFor(row.phc_id, row.medicine_id),
+    Number(row.predicted_daily_demand) || 0
+  ]));
+}
+
 /**
  * Resolves the BigQuery project id from env vars, or from the service-account
  * JSON referenced by GOOGLE_APPLICATION_CREDENTIALS, so telemetry writes work
@@ -945,13 +965,17 @@ app.get("/alerts", async (req, res) => {
     const phcs = directories.phcs;
     const medicines = directories.medicines;
     const records = await getInventoryRecords();
+    const forecastDemand = await getSevenDayForecastDemand();
     const alerts = [];
     const severityRank = { CRITICAL: 0, HIGH: 1, WARNING: 2 };
 
     records.forEach(item => {
-      const consumption = Number(item.daily_consumption) || 1;
+      const reportedDemand = Number(item.daily_consumption) || 0;
+      const predictedDailyDemand = forecastDemand.get(pendingKeyFor(item.phc_id, item.medicine_id)) || reportedDemand;
       const stock = Number(item.current_stock) || 0;
-      const daysRemaining = round1(stock / consumption);
+      const daysRemaining = predictedDailyDemand > 0
+        ? Math.round((stock / predictedDailyDemand) * 100) / 100
+        : Number.POSITIVE_INFINITY;
       const phcMeta = findPhc(item.phc_id, phcs);
       const medMeta = findMedicine(item.medicine_id, medicines);
 
@@ -969,8 +993,10 @@ app.get("/alerts", async (req, res) => {
           medicine_id: item.medicine_id,
           medicine_name: item.medicine_name || medMeta.name,
           current_stock: stock,
-          daily_consumption: consumption,
+          predicted_daily_demand: predictedDailyDemand,
+          daily_consumption: reportedDemand,
           days_remaining: daysRemaining,
+          risk_level: "CRITICAL",
           recommended_action: "Trigger inter-facility redistribution (POST /recommendation)",
           message: `${item.medicine_name || medMeta.name} will run out in ${daysRemaining} days at ${phcMeta.name} (${stock} units left). Immediate redistribution recommended.`
         });
@@ -988,8 +1014,10 @@ app.get("/alerts", async (req, res) => {
           medicine_id: item.medicine_id,
           medicine_name: item.medicine_name || medMeta.name,
           current_stock: stock,
-          daily_consumption: consumption,
+          predicted_daily_demand: predictedDailyDemand,
+          daily_consumption: reportedDemand,
           days_remaining: daysRemaining,
+          risk_level: "WARNING",
           recommended_action: "Schedule replenishment within the weekly indent",
           message: `${item.medicine_name || medMeta.name} running low at ${phcMeta.name}: ${daysRemaining} days of stock remaining.`
         });
