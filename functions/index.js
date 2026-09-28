@@ -33,6 +33,7 @@ try {
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
 const BQ_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "";
 const BQ_DATASET = process.env.BQ_DATASET || "swasthya_ai";
+const BQ_LOCATION = process.env.BQ_LOCATION || "US";
 
 // "gemini-1.5-flash" was retired; try current GA model ids in order of preference.
 const GEMINI_MODELS = [
@@ -232,6 +233,147 @@ async function getBigQueryRisk() {
   }
 }
 
+/**
+ * Resolves the BigQuery project id from env vars, or from the service-account
+ * JSON referenced by GOOGLE_APPLICATION_CREDENTIALS, so telemetry writes work
+ * both locally and on Cloud Functions without extra configuration.
+ */
+function resolveBigQueryProject() {
+  if (BQ_PROJECT) return BQ_PROJECT;
+  const credFile = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (credFile) {
+    try {
+      const cred = JSON.parse(fs.readFileSync(credFile, "utf8"));
+      if (cred.project_id) return cred.project_id;
+    } catch (err) {
+      console.warn("Could not read credentials file for project id:", err.message);
+    }
+  }
+  return "";
+}
+
+function bigQueryConfigured() {
+  return Boolean(
+    BQ_PROJECT ||
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    process.env.GCLOUD_PROJECT
+  );
+}
+
+/**
+ * Writes a PHC telemetry row to BigQuery.
+ *   1. `current_inventory`  - snapshot UPSERT (delete + insert for that
+ *      phc_id/medicine_id) so the table keeps exactly one current row per pair.
+ *   2. `inventory_history`  - best-effort append (feeds the ARIMA_PLUS training
+ *      table); a missing history table must never fail the API call.
+ * Never throws - returns a status object the endpoint reports back to the UI.
+ */
+async function insertTelemetryToBigQuery(payload) {
+  if (!bigQueryConfigured()) {
+    return {
+      inserted: false,
+      reason: "BigQuery not configured (set GOOGLE_CLOUD_PROJECT or GOOGLE_APPLICATION_CREDENTIALS)"
+    };
+  }
+
+  const projectId = resolveBigQueryProject();
+  const now = payload.timestamp || new Date().toISOString();
+  // Named params here must match the @placeholders in the SQL exactly.
+  const historyRow = {
+    phc_id: payload.phc_id,
+    medicine_id: payload.medicine_id,
+    medicine_name: payload.medicine_name,
+    daily_consumption: payload.daily_consumption,
+    current_stock: payload.current_stock,
+    patient_footfall: payload.patient_footfall
+  };
+  const snapshotRow = {
+    updated_at: now,
+    phc_id: payload.phc_id,
+    medicine_id: payload.medicine_id,
+    medicine_name: payload.medicine_name,
+    current_stock: payload.current_stock,
+    daily_consumption: payload.daily_consumption,
+    beds_available: payload.beds_available,
+    doctors_present: payload.doctors_present,
+    nurses_present: payload.nurses_present,
+    patient_footfall: payload.patient_footfall
+  };
+
+  try {
+    if (!bigQueryClient) bigQueryClient = projectId ? new BigQuery({ projectId }) : new BigQuery();
+
+    const currentTable = `\`${projectId}.${BQ_DATASET}.current_inventory\``;
+    const upsertSql = `
+      DELETE FROM ${currentTable}
+      WHERE phc_id = @phc_id AND medicine_id = @medicine_id;
+      INSERT INTO ${currentTable}
+        (updated_at, phc_id, medicine_id, medicine_name, current_stock, daily_consumption,
+         beds_available, doctors_present, nurses_present, patient_footfall)
+      VALUES
+        (TIMESTAMP(@updated_at), @phc_id, @medicine_id, @medicine_name, @current_stock,
+         @daily_consumption, @beds_available, @doctors_present, @nurses_present, @patient_footfall);`;
+
+    await bigQueryClient.query({
+      query: upsertSql,
+      params: snapshotRow,
+      location: BQ_LOCATION
+    });
+
+    // Best-effort: keep the model training table in sync with the same day's row.
+    let historyInserted = false;
+    let historyError = null;
+    try {
+      const historySql = `
+        INSERT INTO \`${projectId}.${BQ_DATASET}.inventory_history\`
+          (date, phc_id, medicine_id, medicine_name, daily_consumption, current_stock, patient_footfall)
+        VALUES
+          (CURRENT_DATE(), @phc_id, @medicine_id, @medicine_name, @daily_consumption,
+           @current_stock, @patient_footfall);`;
+      await bigQueryClient.query({
+        query: historySql,
+        params: historyRow,
+        location: BQ_LOCATION
+      });
+      historyInserted = true;
+    } catch (err) {
+      historyError = err.message;
+      console.warn("BigQuery history append skipped:", err.message);
+    }
+
+    return {
+      inserted: true,
+      history_inserted: historyInserted,
+      project: projectId,
+      dataset: BQ_DATASET,
+      table: `${projectId}.${BQ_DATASET}.current_inventory`,
+      ...(historyError ? { history_error: historyError } : {})
+    };
+  } catch (err) {
+    // Fallback: streaming insert (works when the service account can insert but
+    // cannot run DML, e.g. read-only/BI permissions).
+    try {
+      if (!bigQueryClient) bigQueryClient = projectId ? new BigQuery({ projectId }) : new BigQuery();
+      const table = bigQueryClient.dataset(BQ_DATASET).table("current_inventory");
+      await table.insert(snapshotRow);
+      return {
+        inserted: true,
+        history_inserted: false,
+        mode: "stream_insert",
+        project: projectId,
+        dataset: BQ_DATASET,
+        table: `${projectId}.${BQ_DATASET}.current_inventory`
+      };
+    } catch (fallbackErr) {
+      return {
+        inserted: false,
+        reason: `${err.message} | fallback: ${fallbackErr.message}`
+      };
+    }
+  }
+}
+
 /** Calls Gemini, trying each configured model id until one responds. */
 async function askGemini(prompt) {
   if (!GEMINI_API_KEY) {
@@ -407,10 +549,22 @@ app.post("/phcUpdate", async (req, res) => {
       }
     }
 
+    // 3. BigQuery: snapshot upsert into `swasthya_ai.current_inventory`
+    //    (+ best-effort append into `inventory_history` for the ML pipeline).
+    const bigqueryResult = await insertTelemetryToBigQuery(payload);
+
+    const stores = [];
+    if (firestoreSaved) stores.push("Firestore");
+    if (bigqueryResult.inserted) stores.push(`BigQuery.${bigqueryResult.table || `${BQ_DATASET}.current_inventory`}`);
+
     res.status(200).json({
       success: true,
-      message: "PHC inventory update recorded successfully",
+      message: stores.length
+        ? `PHC update recorded in ${stores.join(" + ")}`
+        : "PHC update recorded in local session (no datastore configured)",
       saved_to_firestore: firestoreSaved,
+      bigquery_inserted: bigqueryResult.inserted,
+      bigquery: bigqueryResult,
       live_risk_preview: {
         days_remaining: round1((payload.current_stock) / (payload.daily_consumption || 1)),
         risk_level: payload.current_stock / (payload.daily_consumption || 1) <= 3

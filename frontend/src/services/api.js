@@ -1,5 +1,5 @@
 import { db } from "../firebase";
-import { collection, doc, setDoc, getDocs, addDoc } from "firebase/firestore";
+import { collection, doc, setDoc, addDoc } from "firebase/firestore";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -29,19 +29,31 @@ export const SAMPLE_MEDICINES = [
 ];
 
 export async function submitPHCUpdate(payload) {
-  // 1. If backend URL is provided, call backend API
+  // 1. Backend API first (writes to Firestore + BigQuery in one hop)
   if (API_BASE_URL) {
+    let response = null;
     try {
-      const res = await fetch(`${API_BASE_URL}/phcUpdate`, {
+      response = await fetch(`${API_BASE_URL}/phcUpdate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        return await res.json();
-      }
     } catch (err) {
-      console.warn("Backend API call failed, falling back to direct Firestore:", err.message);
+      // Network-level failure (backend not running) -> fall through to Firestore.
+      console.warn("Backend API unreachable, falling back to direct Firestore:", err.message);
+    }
+
+    if (response) {
+      if (response.ok) {
+        // Backend response carries saved_to_firestore / bigquery_inserted status.
+        return await response.json();
+      }
+      const body = await response.json().catch(() => null);
+      if (response.status >= 400 && response.status < 500) {
+        // Validation error - surface it instead of silently double-writing.
+        throw new Error(body?.error || `Backend rejected the update (HTTP ${response.status})`);
+      }
+      console.warn(`Backend returned HTTP ${response.status}, falling back to direct Firestore:`, body);
     }
   }
 
@@ -57,6 +69,9 @@ export async function submitPHCUpdate(payload) {
     return {
       success: true,
       message: "Successfully stored in Firestore (Direct Cloud Connection)",
+      saved_to_firestore: true,
+      bigquery_inserted: null,
+      bigquery: { inserted: false, reason: "Direct Firestore mode - set VITE_API_BASE_URL to also write BigQuery" },
       record: fullRecord
     };
   } catch (firestoreError) {
@@ -64,6 +79,9 @@ export async function submitPHCUpdate(payload) {
     return {
       success: true,
       message: "Update recorded in client session (Mock/Offline mode)",
+      saved_to_firestore: false,
+      bigquery_inserted: null,
+      bigquery: { inserted: false, reason: "Offline mode - no datastore reachable" },
       record: { ...payload, timestamp: new Date().toISOString() }
     };
   }

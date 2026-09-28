@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import {
   Container, Paper, Typography, Box, Grid, TextField,
-  MenuItem, Button, Alert, CircularProgress, Divider,
-  Chip, Card, CardContent, Stack
+  MenuItem, Button, Alert, CircularProgress,
+  Chip, Stack
 } from '@mui/material';
 import { SAMPLE_PHCS, SAMPLE_MEDICINES, submitPHCUpdate } from '../services/api';
 
@@ -12,6 +12,15 @@ const LANGUAGES = [
   { code: 'ta', label: 'Tamil' },
   { code: 'mr', label: 'Marathi' }
 ];
+
+/** Keeps BigQuery status reasons readable inside a small chip. */
+const shortReason = (reason) => {
+  if (!reason) return 'not written';
+  if (/not configured/i.test(reason)) return 'not configured';
+  if (/direct firestore mode/i.test(reason)) return 'needs API base URL';
+  if (/offline mode/i.test(reason)) return 'offline';
+  return reason.length > 42 ? `${reason.slice(0, 42)}…` : reason;
+};
 
 export default function PHCUpdatePage() {
   const [language, setLanguage] = useState('en');
@@ -70,18 +79,7 @@ export default function PHCUpdatePage() {
     setErrorMsg('');
     setSuccessResult(null);
     try {
-      const selectedMed = SAMPLE_MEDICINES.find((m) => m.id === formData.medicine_id);
-      const payload = {
-        ...formData,
-        medicine_name: selectedMed ? selectedMed.name : formData.medicine_id,
-        current_stock: Number(formData.current_stock),
-        daily_consumption: Number(formData.daily_consumption),
-        beds_available: Number(formData.beds_available),
-        doctors_present: Number(formData.doctors_present),
-        nurses_present: Number(formData.nurses_present),
-        patient_footfall: Number(formData.patient_footfall)
-      };
-      const res = await submitPHCUpdate(payload);
+      const res = await submitPHCUpdate(payloadPreview);
       setSuccessResult(res);
     } catch (err) {
       setErrorMsg(err.message || 'Failed to submit update');
@@ -91,9 +89,37 @@ export default function PHCUpdatePage() {
   };
 
   const selectedPhc = SAMPLE_PHCS.find((p) => p.id === formData.phc_id);
+  const selectedMed = SAMPLE_MEDICINES.find((m) => m.id === formData.medicine_id);
   const daysRemaining = formData.daily_consumption > 0
     ? (formData.current_stock / formData.daily_consumption).toFixed(1)
     : '0';
+
+  // Exact body sent to POST /phcUpdate (also rendered as the sample request).
+  const payloadPreview = {
+    phc_id: formData.phc_id,
+    medicine_id: formData.medicine_id,
+    medicine_name: selectedMed ? selectedMed.name : formData.medicine_id,
+    current_stock: Number(formData.current_stock),
+    daily_consumption: Number(formData.daily_consumption),
+    beds_available: Number(formData.beds_available),
+    doctors_present: Number(formData.doctors_present),
+    nurses_present: Number(formData.nurses_present),
+    patient_footfall: Number(formData.patient_footfall)
+  };
+
+  // Where did the last submit actually land?
+  const persistence = successResult
+    ? {
+        firestore: typeof successResult.saved_to_firestore === 'boolean'
+          ? successResult.saved_to_firestore
+          : /Firestore/i.test(successResult.message || ''),
+        bigquery: successResult.bigquery_inserted,
+        bigqueryReason: successResult.bigquery?.reason || null,
+        bigqueryTable: successResult.bigquery?.table || 'swasthya_ai.current_inventory',
+        bigqueryHistory: successResult.bigquery?.history_inserted ?? null,
+        preview: successResult.live_risk_preview || null
+      }
+    : null;
 
   return (
     <Container maxWidth="lg" sx={{ py: 3 }}>
@@ -155,7 +181,42 @@ export default function PHCUpdatePage() {
                 </Grid>
               </Grid>
               {errorMsg && <Alert severity="error" sx={{ mt: 2 }}>{errorMsg}</Alert>}
-              {successResult && <Alert severity="success" sx={{ mt: 2 }}>{successResult.message}</Alert>}
+              {successResult && (
+                <Alert severity="success" sx={{ mt: 2 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    {successResult.message}
+                  </Typography>
+                  <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', gap: 1 }}>
+                    <Chip
+                      size="small"
+                      color={persistence?.firestore ? 'success' : 'default'}
+                      variant={persistence?.firestore ? 'filled' : 'outlined'}
+                      label={persistence?.firestore ? 'Firestore: saved' : 'Firestore: not saved'}
+                    />
+                    <Chip
+                      size="small"
+                      color={persistence?.bigquery ? 'success' : 'default'}
+                      variant={persistence?.bigquery ? 'filled' : 'outlined'}
+                      label={
+                        persistence?.bigquery
+                          ? 'BigQuery: current_inventory row written'
+                          : `BigQuery: ${shortReason(persistence?.bigqueryReason)}`
+                      }
+                    />
+                    {persistence?.preview && (
+                      <Chip
+                        size="small"
+                        color={
+                          persistence.preview.risk_level === 'CRITICAL'
+                            ? 'error'
+                            : persistence.preview.risk_level === 'WARNING' ? 'warning' : 'success'
+                        }
+                        label={`${persistence.preview.days_remaining} days left · ${persistence.preview.risk_level}`}
+                      />
+                    )}
+                  </Stack>
+                </Alert>
+              )}
               <Box sx={{ mt: 2 }}>
                 <Button type="submit" variant="contained" disabled={loading} sx={{ fontWeight: 700 }}>
                   {loading ? <CircularProgress size={20} /> : 'Submit Telemetry'}
@@ -165,14 +226,78 @@ export default function PHCUpdatePage() {
           </Paper>
         </Grid>
         <Grid size={{ xs: 12, md: 4 }}>
-          <Paper sx={{ p: 2, borderRadius: 2, bgcolor: Number(daysRemaining) <= 3 ? '#fef2f2' : '#f0fdf4' }}>
-            <Typography variant="overline" sx={{ fontWeight: 700 }}>DAYS OF STOCK REMAINING</Typography>
-            <Typography variant="h3" sx={{ fontWeight: 800 }}>{daysRemaining} Days</Typography>
-            <Chip label={Number(daysRemaining) <= 3 ? 'CRITICAL DEFICIT' : 'HEALTHY BUFFER'} color={Number(daysRemaining) <= 3 ? 'error' : 'success'} size="small" sx={{ mb: 2 }} />
-            <Typography variant="body2">• Footfall: {formData.patient_footfall} patients/day</Typography>
-            <Typography variant="body2">• Staff: {formData.doctors_present} Dr, {formData.nurses_present} Nurse</Typography>
-            <Typography variant="body2">• Beds: {formData.beds_available} Open</Typography>
-          </Paper>
+          <Stack spacing={2}>
+            <Paper sx={{ p: 2, borderRadius: 2, bgcolor: Number(daysRemaining) <= 3 ? '#fef2f2' : '#f0fdf4' }}>
+              <Typography variant="overline" sx={{ fontWeight: 700 }}>DAYS OF STOCK REMAINING</Typography>
+              <Typography variant="h3" sx={{ fontWeight: 800 }}>{daysRemaining} Days</Typography>
+              <Chip label={Number(daysRemaining) <= 3 ? 'CRITICAL DEFICIT' : 'HEALTHY BUFFER'} color={Number(daysRemaining) <= 3 ? 'error' : 'success'} size="small" sx={{ mb: 2 }} />
+              <Typography variant="body2">• Footfall: {formData.patient_footfall} patients/day</Typography>
+              <Typography variant="body2">• Staff: {formData.doctors_present} Dr, {formData.nurses_present} Nurse</Typography>
+              <Typography variant="body2">• Beds: {formData.beds_available} Open</Typography>
+            </Paper>
+
+            {/* Persistence verification: shows where the submitted row landed */}
+            <Paper sx={{ p: 2, borderRadius: 2 }}>
+              <Typography variant="overline" sx={{ fontWeight: 700 }}>WHERE THE UPDATE IS STORED</Typography>
+              {!persistence && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Submit the form to see the exact Firestore document and BigQuery row.
+                </Typography>
+              )}
+              {persistence && (
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="body2">
+                    • Firestore:{' '}
+                    <b>
+                      {persistence.firestore
+                        ? `current_inventory/${formData.phc_id}_${formData.medicine_id}`
+                        : 'not written'}
+                    </b>
+                  </Typography>
+                  <Typography variant="body2">
+                    • BigQuery:{' '}
+                    <b>
+                      {persistence.bigquery
+                        ? `${persistence.bigqueryTable}`
+                        : shortReason(persistence.bigqueryReason)}
+                    </b>
+                  </Typography>
+                  {persistence.bigqueryHistory && (
+                    <Typography variant="body2">• Also appended to inventory_history (ML training table)</Typography>
+                  )}
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                    Verify in the BigQuery console:
+                  </Typography>
+                  <Box
+                    component="pre"
+                    sx={{
+                      fontSize: 11, fontFamily: 'monospace', bgcolor: '#0f172a', color: '#e2e8f0',
+                      p: 1.5, borderRadius: 1, m: 0, mt: 0.5, overflowX: 'auto', whiteSpace: 'pre-wrap'
+                    }}
+                  >
+{`SELECT * FROM \`swasthya_ai.current_inventory\`
+WHERE phc_id = '${formData.phc_id}'
+  AND medicine_id = '${formData.medicine_id}'
+ORDER BY updated_at DESC LIMIT 1;`}
+                  </Box>
+                </Box>
+              )}
+            </Paper>
+
+            {/* Exact request body that POST /phcUpdate receives */}
+            <Paper sx={{ p: 2, borderRadius: 2 }}>
+              <Typography variant="overline" sx={{ fontWeight: 700 }}>SAMPLE API REQUEST · POST /phcUpdate</Typography>
+              <Box
+                component="pre"
+                sx={{
+                  fontSize: 11, fontFamily: 'monospace', bgcolor: '#0f172a', color: '#e2e8f0',
+                  p: 1.5, borderRadius: 1, m: 0, mt: 1, overflowX: 'auto', whiteSpace: 'pre-wrap'
+                }}
+              >
+                {JSON.stringify(payloadPreview, null, 2)}
+              </Box>
+            </Paper>
+          </Stack>
         </Grid>
       </Grid>
     </Container>

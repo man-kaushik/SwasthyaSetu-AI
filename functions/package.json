@@ -7,6 +7,7 @@
     "start": "npm run shell",
     "start:local": "node server.js",
     "smoke": "node smoke_test.js",
+    "test:bq": "node test_phc_update_bigquery.js",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
   },
