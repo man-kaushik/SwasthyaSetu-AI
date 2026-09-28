@@ -19,6 +19,24 @@
 -- uncomment AUTO_ARIMA_MAX_ORDER = 2 (lower = faster, slightly less accurate).
 -- ============================================================================
 
+-- Fail early with an actionable message if the history table is empty or has
+-- no series with at least three parseable dates and non-NULL consumption rows.
+ASSERT (
+  SELECT COUNT(*) > 0
+  FROM (
+    SELECT
+      CONCAT(CAST(phc_id AS STRING), '_', CAST(medicine_id AS STRING)) AS phc_medicine_id
+    FROM `swasthya_ai.inventory_history`
+    WHERE date IS NOT NULL
+      AND phc_id IS NOT NULL
+      AND medicine_id IS NOT NULL
+      AND SAFE.PARSE_DATE('%Y-%m-%d', SUBSTR(CAST(date AS STRING), 1, 10)) IS NOT NULL
+      AND SAFE_CAST(daily_consumption AS FLOAT64) IS NOT NULL
+    GROUP BY phc_medicine_id
+    HAVING COUNT(DISTINCT SAFE.PARSE_DATE('%Y-%m-%d', SUBSTR(CAST(date AS STRING), 1, 10))) >= 3
+  )
+) AS 'No usable inventory_history rows for model training. Run bigquery/seed_sql/04_seed_inventory_history.sql in this same BigQuery project first and confirm rows_loaded is 10800. Do not rerun schema.sql after seeding, because it drops this table.';
+
 CREATE OR REPLACE MODEL `swasthya_ai.medicine_demand_forecast`
 OPTIONS(
   model_type = 'ARIMA_PLUS',

@@ -1,0 +1,66 @@
+[
+  {
+    "medicine_id": "ORS",
+    "medicine_name": "ORS Packets (Oral Rehydration)",
+    "category": "Hydration",
+    "unit": "Packets",
+    "safety_stock": 100,
+    "standard_daily_consumption": 18
+  },
+  {
+    "medicine_id": "PARACETAMOL_500",
+    "medicine_name": "Paracetamol 500mg Tablets",
+    "category": "Analgesic/Antipyretic",
+    "unit": "Strips (10s)",
+    "safety_stock": 200,
+    "standard_daily_consumption": 40
+  },
+  {
+    "medicine_id": "AMOXICILLIN_500",
+    "medicine_name": "Amoxicillin 500mg Capsules",
+    "category": "Antibiotic",
+    "unit": "Strips (10s)",
+    "safety_stock": 150,
+    "standard_daily_consumption": 25
+  },
+  {
+    "medicine_id": "AZITHROMYCIN_500",
+    "medicine_name": "Azithromycin 500mg Tablets",
+    "category": "Antibiotic",
+    "unit": "Strips (3s)",
+    "safety_stock": 80,
+    "standard_daily_consumption": 15
+  },
+  {
+    "medicine_id": "METFORMIN_500",
+    "medicine_name": "Metformin 500mg Tablets",
+    "category": "Chronic Disease",
+    "unit": "Strips (10s)",
+    "safety_stock": 120,
+    "standard_daily_consumption": 22
+  },
+  {
+    "medicine_id": "INSULIN_REGULAR",
+    "medicine_name": "Insulin Regular (100IU/ml)",
+    "category": "Cold Chain",
+    "unit": "Vials",
+    "safety_stock": 30,
+    "standard_daily_consumption": 5
+  },
+  {
+    "medicine_id": "RABIES_VACCINE",
+    "medicine_name": "Anti-Rabies Vaccine (ARV)",
+    "category": "Cold Chain / Emergency",
+    "unit": "Vials",
+    "safety_stock": 25,
+    "standard_daily_consumption": 4
+  },
+  {
+    "medicine_id": "OXYGEN_CYLINDER",
+    "medicine_name": "Medical Oxygen D-Type",
+    "category": "Critical Care",
+    "unit": "Cylinders",
+    "safety_stock": 8,
+    "standard_daily_consumption": 2
+  }
+]

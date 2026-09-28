@@ -1,0 +1,137 @@
+[
+  {
+    "phc_id": "MH-PUNE-PHC-001",
+    "name": "Haveli Primary Health Centre",
+    "state": "Maharashtra",
+    "district": "Pune",
+    "lat": 18.5204,
+    "lng": 73.8567,
+    "population_served": 28500
+  },
+  {
+    "phc_id": "MH-PUNE-PHC-002",
+    "name": "Shirur Community Health Post",
+    "state": "Maharashtra",
+    "district": "Pune",
+    "lat": 18.8268,
+    "lng": 74.3789,
+    "population_served": 21400
+  },
+  {
+    "phc_id": "MH-PUNE-PHC-003",
+    "name": "Baramati Rural Health Centre",
+    "state": "Maharashtra",
+    "district": "Pune",
+    "lat": 18.1517,
+    "lng": 74.5771,
+    "population_served": 34200
+  },
+  {
+    "phc_id": "MH-PUNE-PHC-004",
+    "name": "Junnar Valley PHC",
+    "state": "Maharashtra",
+    "district": "Pune",
+    "lat": 19.2083,
+    "lng": 73.8767,
+    "population_served": 19800
+  },
+  {
+    "phc_id": "MH-PUNE-PHC-011",
+    "name": "Daund Sub-District Health Depot",
+    "state": "Maharashtra",
+    "district": "Pune",
+    "lat": 18.4636,
+    "lng": 74.5804,
+    "population_served": 45000
+  },
+  {
+    "phc_id": "MH-NSK-PHC-001",
+    "name": "Dindori Primary Health Post",
+    "state": "Maharashtra",
+    "district": "Nashik",
+    "lat": 20.2012,
+    "lng": 73.8344,
+    "population_served": 23100
+  },
+  {
+    "phc_id": "MH-NSK-PHC-002",
+    "name": "Sinnar Rural Health Centre",
+    "state": "Maharashtra",
+    "district": "Nashik",
+    "lat": 19.8456,
+    "lng": 74.0023,
+    "population_served": 26800
+  },
+  {
+    "phc_id": "BR-PATNA-PHC-001",
+    "name": "Danapur Primary Health Centre",
+    "state": "Bihar",
+    "district": "Patna",
+    "lat": 25.6322,
+    "lng": 85.0427,
+    "population_served": 39000
+  },
+  {
+    "phc_id": "BR-PATNA-PHC-004",
+    "name": "Phulwari Sharif Health Post",
+    "state": "Bihar",
+    "district": "Patna",
+    "lat": 25.5786,
+    "lng": 85.0782,
+    "population_served": 48500
+  },
+  {
+    "phc_id": "BR-PATNA-PHC-009",
+    "name": "Fatuha Rural Health Centre",
+    "state": "Bihar",
+    "district": "Patna",
+    "lat": 25.5097,
+    "lng": 85.3129,
+    "population_served": 32700
+  },
+  {
+    "phc_id": "BR-GAYA-PHC-001",
+    "name": "Bodh Gaya Primary Health Post",
+    "state": "Bihar",
+    "district": "Gaya",
+    "lat": 24.6961,
+    "lng": 84.9869,
+    "population_served": 31200
+  },
+  {
+    "phc_id": "TN-MDU-PHC-001",
+    "name": "Vadipatti Primary Health Centre",
+    "state": "Tamil Nadu",
+    "district": "Madurai",
+    "lat": 10.0574,
+    "lng": 77.9628,
+    "population_served": 27900
+  },
+  {
+    "phc_id": "TN-MDU-PHC-002",
+    "name": "Usilampatti Community Health Post",
+    "state": "Tamil Nadu",
+    "district": "Madurai",
+    "lat": 9.9678,
+    "lng": 77.7942,
+    "population_served": 24600
+  },
+  {
+    "phc_id": "TN-MDU-PHC-005",
+    "name": "Melur Health Sub-Center",
+    "state": "Tamil Nadu",
+    "district": "Madurai",
+    "lat": 10.05,
+    "lng": 78.33,
+    "population_served": 29300
+  },
+  {
+    "phc_id": "TN-TNV-PHC-001",
+    "name": "Ambasamudram Health Post",
+    "state": "Tamil Nadu",
+    "district": "Tirunelveli",
+    "lat": 8.7061,
+    "lng": 77.4589,
+    "population_served": 25100
+  }
+]
