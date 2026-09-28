@@ -131,6 +131,7 @@ function generateSyntheticData() {
           }
 
           currentInventory.push({
+            updated_at: new Date().toISOString(),
             phc_id: phc.phc_id,
             medicine_id: med.medicine_id,
             medicine_name: med.medicine_name,
@@ -139,8 +140,7 @@ function generateSyntheticData() {
             beds_available: finalBeds,
             doctors_present: finalDoctors,
             nurses_present: finalNurses,
-            patient_footfall: finalFootfall,
-            timestamp: new Date().toISOString()
+            patient_footfall: finalFootfall
           });
         }
       }
@@ -160,7 +160,7 @@ function generateSyntheticData() {
   fs.writeFileSync(path.join(dataDir, "inventory_history.csv"), toCSV(inventoryHistory, histHeaders), "utf8");
   fs.writeFileSync(path.join(dataDir, "inventory_history.json"), JSON.stringify(inventoryHistory, null, 2), "utf8");
 
-  const currHeaders = ["phc_id", "medicine_id", "medicine_name", "current_stock", "daily_consumption", "beds_available", "doctors_present", "nurses_present", "patient_footfall", "timestamp"];
+  const currHeaders = ["updated_at", "phc_id", "medicine_id", "medicine_name", "current_stock", "daily_consumption", "beds_available", "doctors_present", "nurses_present", "patient_footfall"];
   fs.writeFileSync(path.join(dataDir, "current_inventory.csv"), toCSV(currentInventory, currHeaders), "utf8");
   fs.writeFileSync(path.join(dataDir, "current_inventory.json"), JSON.stringify(currentInventory, null, 2), "utf8");
 

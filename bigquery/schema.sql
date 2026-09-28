@@ -1,0 +1,112 @@
+-- ============================================================================
+-- SwasthyaSetu AI: BigQuery Schema and DDL Definitions
+-- Dataset: swasthya_ai
+-- ============================================================================
+
+-- 1. Create Dataset
+CREATE SCHEMA IF NOT EXISTS `swasthya_ai`
+OPTIONS (
+  location = 'US',
+  description = 'SwasthyaSetu AI healthcare resource allocation, demand forecasting and redistribution dataset'
+);
+
+-- 2. Table: phcs (Primary Health Centres directory)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.phcs` (
+  phc_id STRING NOT NULL OPTIONS(description="Unique PHC facility code"),
+  name STRING NOT NULL OPTIONS(description="Primary Health Centre Name"),
+  state STRING NOT NULL OPTIONS(description="State Name"),
+  district STRING NOT NULL OPTIONS(description="District Name"),
+  lat FLOAT64 NOT NULL OPTIONS(description="Geographic latitude"),
+  lng FLOAT64 NOT NULL OPTIONS(description="Geographic longitude"),
+  population_served INT64 OPTIONS(description="Catchment population size")
+);
+
+-- 3. Table: medicines (Essential Medicines Formulary)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.medicines` (
+  medicine_id STRING NOT NULL OPTIONS(description="Standard medicine ID"),
+  medicine_name STRING NOT NULL OPTIONS(description="Medicine brand/generic name"),
+  category STRING OPTIONS(description="Pharmacological / supply chain category"),
+  unit STRING OPTIONS(description="Packaging unit (e.g. Strips, Packets, Vials)"),
+  safety_stock INT64 OPTIONS(description="Minimum safety buffer quantity"),
+  standard_daily_consumption INT64 OPTIONS(description="Baseline average daily consumption rate")
+);
+
+-- 4. Table: inventory_history (Telemetry Time-Series)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.inventory_history` (
+  date DATE NOT NULL OPTIONS(description="Telemetry recording date"),
+  phc_id STRING NOT NULL OPTIONS(description="Facility ID"),
+  medicine_id STRING NOT NULL OPTIONS(description="Medicine ID"),
+  medicine_name STRING OPTIONS(description="Medicine name"),
+  daily_consumption INT64 OPTIONS(description="Units consumed on this date"),
+  current_stock INT64 OPTIONS(description="Closing stock on this date"),
+  patient_footfall INT64 OPTIONS(description="OPD / in-patient footfall count")
+)
+PARTITION BY date
+CLUSTER BY phc_id, medicine_id;
+
+-- 5. Table: current_inventory (Live snapshot)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.current_inventory` (
+  updated_at TIMESTAMP NOT NULL OPTIONS(description="Timestamp of telemetry sync"),
+  phc_id STRING NOT NULL OPTIONS(description="Facility ID"),
+  medicine_id STRING NOT NULL OPTIONS(description="Medicine ID"),
+  medicine_name STRING OPTIONS(description="Medicine Name"),
+  current_stock INT64 NOT NULL OPTIONS(description="Current real-time stock units"),
+  daily_consumption INT64 NOT NULL OPTIONS(description="Reported daily consumption rate"),
+  beds_available INT64 OPTIONS(description="Vacant beds currently available"),
+  doctors_present INT64 OPTIONS(description="Doctors on duty"),
+  nurses_present INT64 OPTIONS(description="Nurses and ANM staff on duty"),
+  patient_footfall INT64 OPTIONS(description="Current daily patient visit count")
+)
+CLUSTER BY phc_id, medicine_id;
+
+-- 6. Table: forecast_results (Predictive BigQuery ML / Vertex AI projections)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.forecast_results` (
+  phc_id STRING NOT NULL,
+  medicine_id STRING NOT NULL,
+  forecast_date DATE NOT NULL,
+  predicted_consumption FLOAT64,
+  lower_bound FLOAT64,
+  upper_bound FLOAT64,
+  projected_stockout_date DATE,
+  days_until_stockout FLOAT64,
+  created_at TIMESTAMP OPTIONS(description="Model inference timestamp")
+)
+PARTITION BY forecast_date
+CLUSTER BY phc_id, medicine_id;
+
+-- 7. Table: alerts (Automated operational stockout and surge notifications)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.alerts` (
+  alert_id STRING NOT NULL,
+  phc_id STRING NOT NULL,
+  phc_name STRING,
+  district STRING,
+  state STRING,
+  alert_type STRING OPTIONS(description="CRITICAL_STOCKOUT, IMMINENT_DEPLETION, BED_SHORTAGE, STAFF_SURGE"),
+  severity STRING OPTIONS(description="CRITICAL, HIGH, MEDIUM, LOW"),
+  medicine_id STRING,
+  current_stock INT64,
+  daily_consumption INT64,
+  days_remaining FLOAT64,
+  message STRING,
+  status STRING OPTIONS(description="ACTIVE, ACKNOWLEDGED, RESOLVED"),
+  created_at TIMESTAMP
+)
+CLUSTER BY severity, district;
+
+-- 8. Table: recommendations (AI redistribution and transfer proposals)
+CREATE TABLE IF NOT EXISTS `swasthya_ai.recommendations` (
+  recommendation_id STRING NOT NULL,
+  alert_id STRING,
+  target_phc_id STRING NOT NULL OPTIONS(description="Deficit facility"),
+  donor_phc_id STRING NOT NULL OPTIONS(description="Surplus donor facility"),
+  medicine_id STRING NOT NULL,
+  medicine_name STRING,
+  recommended_quantity INT64 NOT NULL,
+  distance_km FLOAT64,
+  estimated_transit_hours FLOAT64,
+  donor_remaining_stock INT64,
+  target_extended_days FLOAT64,
+  status STRING OPTIONS(description="PROPOSED, APPROVED, IN_TRANSIT, DELIVERED, REJECTED"),
+  created_at TIMESTAMP
+)
+CLUSTER BY status, target_phc_id;
