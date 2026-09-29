@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import './App.css';
 import {
   ThemeProvider,
   createTheme,
@@ -22,6 +23,7 @@ import AlertsPage from './pages/AlertsPage';
 import TransferTrackingPage from './pages/TransferTrackingPage';
 import NationalMapPage from './pages/NationalMapPage';
 import AddDistrictPage from './pages/AddDistrictPage';
+import { buildEmergencyTickerText } from './services/emergency';
 
 const theme = createTheme({
   palette: {
@@ -51,6 +53,11 @@ function App() {
   const [signInPending, setSignInPending] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [emergencyState, setEmergencyState] = useState({
+    scenario: 'normal',
+    active: false,
+    tickerVisible: false
+  });
   const permissions = getRolePermissions(profile?.role);
 
   useEffect(() => {
@@ -125,6 +132,21 @@ function App() {
       setSignOutPending(false);
     }
   }
+
+  function handleEmergencyScenarioChange(nextScenario) {
+    const normalized = nextScenario || 'normal';
+    setEmergencyState({
+      scenario: normalized,
+      active: normalized !== 'normal',
+      tickerVisible: normalized !== 'normal'
+    });
+  }
+
+  function handleCloseTicker() {
+    setEmergencyState((current) => ({ ...current, tickerVisible: false }));
+  }
+
+  const emergencyTickerText = buildEmergencyTickerText(null, emergencyState.scenario);
 
   if (authLoading || (user && !profile && !authError)) {
     return (
@@ -218,16 +240,29 @@ function App() {
           </Toolbar>
         </AppBar>
 
+          {emergencyState.active && emergencyState.tickerVisible && emergencyTickerText && (
+            <div className="emergency-news-ticker" role="status" aria-live="polite">
+              <div className="emergency-news-ticker__bar">
+                <div className="emergency-news-ticker__track">
+                  <span className="emergency-news-ticker__text">{emergencyTickerText}</span>
+                  <span className="emergency-news-ticker__text">{emergencyTickerText}</span>
+                </div>
+              </div>
+              <button type="button" className="emergency-news-ticker__close" onClick={handleCloseTicker} aria-label="Close emergency alert">
+                ×
+              </button>
+            </div>
+          )}
           {authError && <Alert severity="error" onClose={() => setAuthError('')}>{authError}</Alert>}
           {currentView === 'map'
-            ? <NationalMapPage permissions={permissions} />
+            ? <NationalMapPage permissions={permissions} emergencyState={emergencyState} />
               : currentView === 'add-district'
-                ? permissions.canManageDistricts ? <AddDistrictPage user={profile} /> : <InventoryDashboard permissions={permissions} currentUser={profile} />
+                ? permissions.canManageDistricts ? <AddDistrictPage user={profile} /> : <InventoryDashboard permissions={permissions} currentUser={profile} emergencyState={emergencyState} onEmergencyChange={handleEmergencyScenarioChange} />
                 : currentView === 'alerts'
-              ? <AlertsPage permissions={permissions} currentUser={profile} onTransferGenerated={() => setCurrentView('transfers')} />
+              ? <AlertsPage permissions={permissions} currentUser={profile} emergencyState={emergencyState} onTransferGenerated={() => setCurrentView('transfers')} />
               : currentView === 'transfers'
-                ? <TransferTrackingPage currentUser={profile} permissions={permissions} />
-                : <InventoryDashboard permissions={permissions} currentUser={profile} onTransferGenerated={() => setCurrentView('transfers')} />}
+                ? <TransferTrackingPage currentUser={profile} permissions={permissions} emergencyState={emergencyState} />
+                : <InventoryDashboard permissions={permissions} currentUser={profile} emergencyState={emergencyState} onEmergencyChange={handleEmergencyScenarioChange} onTransferGenerated={() => setCurrentView('transfers')} />}
 
         <Box component="footer" sx={{ py: 3, px: 2, mt: 'auto', backgroundColor: '#f1f5f9', borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

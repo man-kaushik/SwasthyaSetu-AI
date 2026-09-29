@@ -1,6 +1,7 @@
 import { auth, db } from "../firebase";
 import { collection, doc, getDoc, getDocs, limit, query, setDoc, addDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { getRoleForEmail } from "../auth/roles";
+import { buildEmergencyDataSummary, getEmergencyScenario } from "./emergency";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
@@ -404,6 +405,33 @@ ${JSON.stringify(districtSummary)}`;
     recommendedActions: Array.isArray(briefing.recommendedActions) ? briefing.recommendedActions : [],
     dataLimitations: Array.isArray(briefing.dataLimitations) ? briefing.dataLimitations : []
   };
+}
+
+export async function generateEmergencySummary({ dashboard, scenarioKey = "normal" }) {
+  const scenario = getEmergencyScenario(scenarioKey);
+  const summary = buildEmergencyDataSummary(dashboard || { inventory: [] }, scenarioKey);
+  const deterministic = summary.summaryText || `${scenario.label} emergency mode is active.`;
+
+  if (!import.meta.env.VITE_GEMINI_API_KEY) {
+    return { text: deterministic, source: "fallback" };
+  }
+
+  try {
+    const prompt = `You are a district health operations assistant for a hackathon prototype dashboard. Use the verified but lightweight emergency data below. Do not invent PHCs or counts. Write a short operational summary in plain English with 2-3 sentences. Use the supplied counts exactly.\n\nData: ${JSON.stringify({
+      scenario: scenario.label,
+      criticalAlerts: summary.criticalAlerts,
+      warningAlerts: summary.warningAlerts,
+      affectedDistricts: summary.affectedDistricts,
+      stockoutDistricts: summary.stockoutDistricts,
+      impactList: summary.impactList
+    })}`;
+    const text = await requestGeminiInteraction(prompt);
+    const cleaned = String(text).replace(/```json/g, "").replace(/```/g, "").trim();
+    return { text: cleaned || deterministic, source: "gemini" };
+  } catch (error) {
+    console.warn("Gemini emergency summary fallback used:", error.message || String(error));
+    return { text: deterministic, source: "fallback" };
+  }
 }
 
 export async function getTransferTrackingData() {

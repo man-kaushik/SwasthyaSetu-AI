@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { explainAlert, generateTransferRecommendation, getDashboardData, getTransferTrackingData } from "../services/api";
+import { useEffect, useMemo, useState } from "react";
+import { explainAlert, generateEmergencySummary, generateTransferRecommendation, getDashboardData, getTransferTrackingData } from "../services/api";
+import { applyEmergencyScenario, buildEmergencyDataSummary, getEmergencyScenario } from "../services/emergency";
 import { riskCategory } from "../utils/risk";
 import "./InventoryDashboard.css";
 
@@ -8,7 +9,7 @@ const decimal = (value, digits = 1) => value == null || !Number.isFinite(Number(
   ? "—"
   : new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(Number(value));
 
-function InventoryDashboard({ onTransferGenerated, permissions }) {
+function InventoryDashboard({ onTransferGenerated, permissions, emergencyState = { scenario: "normal", active: false }, onEmergencyChange = () => {} }) {
   const [dashboard, setDashboard] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -25,6 +26,12 @@ function InventoryDashboard({ onTransferGenerated, permissions }) {
   const [selectedLanguage, setSelectedLanguage] = useState("en");
   const [aiLoadingKey, setAiLoadingKey] = useState("");
   const [aiExplanation, setAiExplanation] = useState({});
+  const [emergencySummaryText, setEmergencySummaryText] = useState("");
+
+  const emergencyScenario = getEmergencyScenario(emergencyState?.scenario || "normal");
+  const isEmergencyActive = Boolean(emergencyState?.active && emergencyState?.scenario && emergencyState.scenario !== "normal");
+  const effectiveDashboard = useMemo(() => isEmergencyActive ? applyEmergencyScenario(dashboard, emergencyState.scenario) : dashboard, [dashboard, emergencyState?.scenario, isEmergencyActive]);
+  const emergencyData = useMemo(() => buildEmergencyDataSummary(effectiveDashboard || dashboard || { inventory: [] }, emergencyState?.scenario || "normal"), [effectiveDashboard, dashboard, emergencyState?.scenario]);
 
   useEffect(() => {
     let active = true;
@@ -74,8 +81,8 @@ function InventoryDashboard({ onTransferGenerated, permissions }) {
     return () => { active = false; };
   }, [reloadKey]);
 
-  const summary = dashboard?.summary || {};
-  const inventory = dashboard?.inventory || [];
+  const summary = effectiveDashboard?.summary || dashboard?.summary || {};
+  const inventory = effectiveDashboard?.inventory || dashboard?.inventory || [];
   const criticalCount = inventory.filter((row) => riskCategory(row) === "critical").length;
   const warningCount = inventory.filter((row) => riskCategory(row) === "warning").length;
   const states = [...new Set(inventory.map((row) => row.state).filter(Boolean))].sort();
@@ -110,6 +117,26 @@ function InventoryDashboard({ onTransferGenerated, permissions }) {
     DELIVERED: "Completed",
     REJECTED: "Rejected"
   };
+
+  useEffect(() => {
+    if (!isEmergencyActive || !effectiveDashboard) {
+      setEmergencySummaryText("");
+      return;
+    }
+
+    let active = true;
+    generateEmergencySummary({ dashboard: effectiveDashboard, scenarioKey: emergencyState.scenario })
+      .then(({ text }) => {
+        if (active) setEmergencySummaryText(text || emergencyData.summaryText);
+      })
+      .catch(() => {
+        if (active) setEmergencySummaryText(emergencyData.summaryText);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [effectiveDashboard, emergencyState.scenario, emergencyData.summaryText, isEmergencyActive]);
 
   async function handleGeneratePlan(row) {
     const rowKey = `${row.phc_id}-${row.medicine_id}`;
@@ -206,6 +233,67 @@ function InventoryDashboard({ onTransferGenerated, permissions }) {
           <button type="button" onClick={() => setReloadKey((key) => key + 1)}>Try again</button>
         </div>
       )}
+
+      <section className={`emergency-panel ${isEmergencyActive ? "is-active" : ""}`} aria-live="polite">
+        <div className="emergency-header">
+          <div>
+            <p className="eyebrow">DISTRICT EMERGENCY MODE</p>
+            <h2>{isEmergencyActive ? `${emergencyScenario.label.toUpperCase()} SURGE` : "Normal operations"}</h2>
+          </div>
+          <div className="emergency-controls">
+            <label className="emergency-select-wrap">
+              <span>Emergency mode</span>
+              <select value={emergencyState?.scenario || "normal"} onChange={(event) => onEmergencyChange(event.target.value)}>
+                <option value="normal">Normal</option>
+                <option value="dengue">Dengue</option>
+                <option value="diarrhoea">Diarrhoea</option>
+                <option value="heatwave">Heatwave</option>
+                <option value="flu_outbreak">Flu Outbreak</option>
+              </select>
+            </label>
+            <button type="button" className="primary-emergency-button" onClick={() => onEmergencyChange("dengue")}>Simulate Dengue Surge</button>
+          </div>
+        </div>
+
+        {isEmergencyActive ? (
+          <div className="emergency-body">
+            <div className="emergency-impact">
+              <h3>Demand impact</h3>
+              <ul>
+                {Object.entries(emergencyScenario.impacts).map(([label, percent]) => (
+                  <li key={label}><span>{label}</span><strong>+{percent}%</strong></li>
+                ))}
+              </ul>
+            </div>
+            <div className="emergency-summary-card">
+              <h3>Emergency summary</h3>
+              <p>{emergencySummaryText || emergencyData.summaryText}</p>
+            </div>
+            <div className="emergency-kpi-grid">
+              <div className="emergency-kpi red">
+                <span>Critical Alerts</span>
+                <strong>{number(emergencyData.criticalAlerts)}</strong>
+              </div>
+              <div className="emergency-kpi amber">
+                <span>Stock-out Risks</span>
+                <strong>{number(emergencyData.warningAlerts)}</strong>
+              </div>
+              <div className="emergency-kpi blue">
+                <span>Affected Districts</span>
+                <strong>{number(emergencyData.affectedDistricts)}</strong>
+              </div>
+              <div className="emergency-kpi green">
+                <span>Estimated Days Until Stock-out</span>
+                <strong>{emergencyData.stockoutDistricts > 0 ? "≤5 days" : "Stable"}</strong>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="emergency-body emergency-body-empty">
+            <p>Baseline demand and alerting are active. No emergency scenario is selected.</p>
+          </div>
+        )}
+      </section>
 
       <section className="metric-grid" aria-label="Operations summary">
         <article className="metric metric-green">
