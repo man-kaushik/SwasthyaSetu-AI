@@ -1,6 +1,6 @@
 export const ROLE_EMAILS = Object.freeze({
-  "ms4055028@gmail.com": "operations",
-  "juhi.batra25@gmail.com": "viewer"
+  "ms4055028@gmail.com": "viewer",
+  "juhi.batra25@gmail.com": "operations"
 });
 
 export const ROLE_LABELS = Object.freeze({

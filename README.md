@@ -1,61 +1,62 @@
 # SwasthyaSetu-AI
 
-# Overall Architecture
+## Brief Description
 
-```text
-Firebase Hosting Web App
-  |
-  |-- Firebase Auth
-  |
-  |-- Firestore
-  |-- Apps Script web app (read-only dashboard endpoint)
-          |-- BigQuery current_inventory / phcs / medicines
-  |-- Google Maps API frontend
+SwasthyaSetu AI is an India-focused PHC operations prototype that surfaces medicine stock-out risks and helps teams coordinate human-reviewed redistribution across facilities.
+It combines Firebase, BigQuery, a BigQuery ML demand-forecast pipeline, and server-side Google Gemini explanations, with realistic synthetic data spanning multiple states and Hindi/Tamil alert support.
+
+# Architecture Overview
+
+```mermaid
+flowchart LR
+    operator["Health operations team"] --> hosting["Firebase Hosting"]
+    hosting --> app["React web app"]
+    app --> auth["Firebase Authentication"]
+    app <--> firestore["Cloud Firestore<br/>operational records and approvals"]
+    app -->|Dashboard reads| script["Apps Script web app<br/>read-only endpoint"]
+    script -->|Read-only query| bq["BigQuery<br/>inventory, PHCs, medicines"]
+    app -->|Default /api route| functions["Firebase HTTPS Function<br/>Express API"]
+    app -. "Optional API host" .-> run["Cloud Run<br/>same Express API"]
+    functions --> bq
+    run --> bq
+    functions -->|Server-side prompt| gemini["Gemini API"]
+    run -->|Server-side prompt| gemini
+    app --> maps["Google Maps JavaScript API"]
 ```
 
----
+Firebase Hosting serves the web app and rewrites `/api` requests to the Firebase
+HTTPS Function by default. The same Express API can be deployed to Cloud Run as
+an alternative host. Dashboard reads use the Apps Script endpoint when it is
+configured; that endpoint queries BigQuery with read-only access. Firestore
+holds operational records and transfer approvals. The API connects to BigQuery
+and, when configured, calls Gemini for alert explanations. Gemini credentials
+stay on the server and are never exposed to the browser. Google Maps renders
+PHC locations in the map view.
 
-# GitHub Repository Structure
+The no-billing Apps Script dashboard calculates stock risk from current stock
+and consumption; it does not query BigQuery ML forecasts. Gemini features also
+depend on the API being deployed with a Gemini API key. The UI has a local
+fallback when AI is unavailable.
 
-Create this:
+## Prototype Features
 
-```text
-swasthyasetu-ai/
-│
-├── frontend/
-│   ├── src/
-│   ├── public/
-│   ├── package.json
-│   └── firebase.json
-│
-├── functions/
-│   ├── index.js
-│   ├── services/
-│   │   ├── bigquery.js
-│   │   ├── gemini.js
-│   │   ├── translate.js
-│   │   ├── riskEngine.js
-│   │   └── recommendationEngine.js
-│   └── package.json
-│
-├── data/
-│   ├── generate_data.js
-│   ├── phcs.csv
-│   ├── medicines.csv
-│   └── inventory_history.csv
-│
-├── bigquery/
-│   ├── create_tables.sql
-│   ├── load_data_notes.md
-│   ├── train_forecast_model.sql
-│   └── forecast_query.sql
-│
-├── docs/
-│   ├── demo_script.md
-│   └── pitch_deck_outline.md
-│
-└── README.md
-```
+- **Inventory overview:** Compare PHC medicine stock, predicted daily demand,
+  days remaining, and risk; filter by state, district, and risk level.
+- **Stock-out alerts:** Review critical and warning facilities, inspect alert
+  details, and request an explanation where the AI backend is available.
+- **Emergency simulation:** Preview demand and risk changes for dengue,
+  diarrhoea, heatwave, or flu scenarios. This is a demo simulation; it does not
+  change the source inventory in BigQuery.
+- **Medicine redistribution:** Generate a suggested transfer from a nearby
+  surplus facility, then review, approve, reject, and track its status.
+- **National PHC map:** Explore facilities and risk by geography, medicine, and
+  risk category using Google Maps.
+- **Role-aware operations:** Operations Managers can manage district and supply
+  records; Response Viewers can monitor and raise transfer requests.
+- **District setup:** Add a district, PHC coordinates, and starting medicine
+  supply records to Firestore.
+
+For a ready-to-read recording walkthrough, see [docs/demo_script.md](docs/demo_script.md).
 
 ---
 
