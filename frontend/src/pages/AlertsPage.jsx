@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAlertsData } from "../services/api";
+import { generateTransferRecommendation, getAlertsData, getTransferTrackingData } from "../services/api";
 import "./AlertsPage.css";
 
 const format = (value, digits = 0) => new Intl.NumberFormat("en-IN", {
@@ -8,7 +8,7 @@ const format = (value, digits = 0) => new Intl.NumberFormat("en-IN", {
 }).format(Number(value) || 0);
 const riskRank = { CRITICAL: 0, WARNING: 1, STABLE: 2 };
 
-function AlertsPage() {
+function AlertsPage({ onTransferGenerated }) {
   const [alerts, setAlerts] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -18,6 +18,9 @@ function AlertsPage() {
   const [riskFilter, setRiskFilter] = useState("action");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [transferStatuses, setTransferStatuses] = useState({});
+  const [planLoadingKey, setPlanLoadingKey] = useState("");
+  const [transferNotice, setTransferNotice] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -37,6 +40,48 @@ function AlertsPage() {
       });
     return () => { active = false; };
   }, [refreshKey]);
+
+  useEffect(() => {
+    let active = true;
+    getTransferTrackingData()
+      .then(({ recommendations, transfers }) => {
+        if (!active) return;
+        const transferByRecommendation = new Map(transfers
+          .filter((transfer) => transfer.recommendation_id)
+          .map((transfer) => [transfer.recommendation_id, transfer]));
+        const newestFirst = [...recommendations].sort((left, right) =>
+          new Date(right.created_at || right.approved_at || 0) - new Date(left.created_at || left.approved_at || 0));
+        const statuses = {};
+        newestFirst.forEach((recommendation) => {
+          const key = `${recommendation.destination_phc_id || recommendation.shortage_phc}_${recommendation.medicine_id}`;
+          const transfer = transferByRecommendation.get(recommendation.recommendation_id);
+          if (!statuses[key]) statuses[key] = transfer?.status || recommendation.status;
+        });
+        setTransferStatuses(statuses);
+      })
+      .catch(() => { if (active) setTransferStatuses({}); });
+    return () => { active = false; };
+  }, [refreshKey]);
+
+  async function handleGeneratePlan(row) {
+    const key = `${row.phc_id}-${row.medicine_id}`;
+    setPlanLoadingKey(key);
+    setTransferNotice(null);
+    try {
+      const result = await generateTransferRecommendation({ phc_id: row.phc_id, medicine_id: row.medicine_id });
+      if (!result.recommended) {
+        setTransferNotice({ kind: "info", text: result.message || "No transfer plan is available." });
+      } else if (result.saved_to_firestore === false) {
+        setTransferNotice({ kind: "error", text: `The transfer was generated but could not be saved: ${result.firestore_error || "Firestore unavailable"}` });
+      } else {
+        onTransferGenerated?.();
+      }
+    } catch (requestError) {
+      setTransferNotice({ kind: "error", text: requestError.message || "Could not generate a transfer plan." });
+    } finally {
+      setPlanLoadingKey("");
+    }
+  }
 
   const states = [...new Set(alerts.map((row) => row.state).filter(Boolean))].sort();
   const districts = [...new Set(alerts
@@ -75,6 +120,7 @@ function AlertsPage() {
       </section>
 
       {error && <div className="alerts-error" role="alert">{error}</div>}
+      {transferNotice && <div className={`alerts-transfer-notice ${transferNotice.kind}`} role="status"><span>{transferNotice.text}</span><button type="button" onClick={() => setTransferNotice(null)}>Dismiss</button></div>}
 
       <section className="alerts-metrics" aria-label="Alert totals">
         <article className="alert-metric critical-metric"><span>Critical</span><strong>{loading && !alerts.length ? "—" : format(critical)}</strong><small>3 days of stock or less</small></article>
@@ -105,9 +151,9 @@ function AlertsPage() {
 
         <div className="alerts-table-scroll">
           <table className="alerts-table">
-            <thead><tr><th>Facility</th><th>Area</th><th>Medicine</th><th>Stock</th><th>Forecast / day</th><th>Days remaining</th><th>Risk</th></tr></thead>
+            <thead><tr><th>Facility</th><th>Area</th><th>Medicine</th><th>Stock</th><th>Forecast / day</th><th>Days remaining</th><th>Risk</th><th>Action</th></tr></thead>
             <tbody>
-              {loading && !alerts.length ? <tr><td colSpan="7" className="alerts-empty">Loading forecast-based alerts...</td></tr> :
+              {loading && !alerts.length ? <tr><td colSpan="8" className="alerts-empty">Loading forecast-based alerts...</td></tr> :
                 visibleAlerts.length ? visibleAlerts.map((row) => (
                   <tr key={`${row.phc_id}-${row.medicine_id}`}>
                     <td><strong>{row.phc_name || row.phc_id}</strong><small>{row.phc_id}</small></td>
@@ -117,8 +163,22 @@ function AlertsPage() {
                     <td className="alerts-number">{format(row.predicted_daily_demand, 2)}</td>
                     <td className="alerts-number">{row.days_remaining == null ? "—" : format(row.days_remaining, 2)}</td>
                     <td><span className={`alert-risk risk-${String(row.risk_level || "stable").toLowerCase()}`}>{row.risk_level || "STABLE"}</span></td>
+                    <td>
+                      {row.risk_level === "STABLE" ? "Monitor" : transferStatuses[`${row.phc_id}_${row.medicine_id}`] ? (
+                        <span className={`alerts-generated alerts-generated-${String(transferStatuses[`${row.phc_id}_${row.medicine_id}`]).toLowerCase()}`}>
+                          {transferStatuses[`${row.phc_id}_${row.medicine_id}`] === "PROPOSED" ? "Approval Raised" :
+                            ["APPROVED_IN_TRANSIT", "IN_TRANSIT"].includes(transferStatuses[`${row.phc_id}_${row.medicine_id}`]) ? "In Transit" :
+                            ["COMPLETED", "DELIVERED"].includes(transferStatuses[`${row.phc_id}_${row.medicine_id}`]) ? "Completed" :
+                            transferStatuses[`${row.phc_id}_${row.medicine_id}`] === "REJECTED" ? "Rejected" : "Request Raised"}
+                        </span>
+                      ) : (
+                        <button type="button" className="alerts-generate-plan" disabled={Boolean(planLoadingKey)} onClick={() => handleGeneratePlan(row)}>
+                          {planLoadingKey === `${row.phc_id}-${row.medicine_id}` ? "Finding source..." : "Generate Transfer Plan"}
+                        </button>
+                      )}
+                    </td>
                   </tr>
-                )) : <tr><td colSpan="7" className="alerts-empty">{error ? "Alerts could not be loaded." : "No records match these filters."}</td></tr>}
+                )) : <tr><td colSpan="8" className="alerts-empty">{error ? "Alerts could not be loaded." : "No records match these filters."}</td></tr>}
             </tbody>
           </table>
         </div>

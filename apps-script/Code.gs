@@ -5,9 +5,11 @@ function doGet(event) {
   let response;
 
   try {
-    response = event && event.parameter && event.parameter.route === "alerts"
-      ? getAlerts_()
-      : getDashboard_();
+    const parameters = event && event.parameter || {};
+    if (parameters.route === "alerts") response = getAlerts_();
+    else if (parameters.route === "recommendation") {
+      response = getRecommendation_(parameters.phc_id, parameters.medicine_id);
+    } else response = getDashboard_();
   } catch (error) {
     response = { error: `BigQuery dashboard query failed: ${error.message}` };
   }
@@ -28,7 +30,7 @@ function doGet(event) {
 
 function getDashboard_() {
   const cache = CacheService.getScriptCache();
-  const cached = cache.get("inventory-dashboard-v1");
+  const cached = cache.get("inventory-dashboard-v2");
   if (cached) return JSON.parse(cached);
 
   const properties = PropertiesService.getScriptProperties();
@@ -42,6 +44,8 @@ function getDashboard_() {
       COALESCE(p.name, i.phc_id) AS phc_name,
       p.district,
       p.state,
+      p.lat,
+      p.lng,
       i.medicine_id,
       COALESCE(i.medicine_name, m.medicine_name, i.medicine_id) AS medicine_name,
       i.current_stock,
@@ -80,7 +84,7 @@ function getDashboard_() {
       record[field.name] = row.f[index].v;
     });
 
-    ["current_stock", "daily_consumption", "beds_available", "doctors_present", "nurses_present", "patient_footfall"]
+    ["lat", "lng", "current_stock", "daily_consumption", "beds_available", "doctors_present", "nurses_present", "patient_footfall"]
       .forEach((field) => { record[field] = Number(record[field]) || 0; });
 
     const key = `${record.phc_id}__${record.medicine_id}`;
@@ -129,8 +133,108 @@ function getDashboard_() {
     inventory: rows.map(({ total_phc_directory, ...row }) => row)
   };
   const serialized = JSON.stringify(payload);
-  if (serialized.length < 90000) cache.put("inventory-dashboard-v1", serialized, 30);
+  if (serialized.length < 90000) cache.put("inventory-dashboard-v2", serialized, 30);
   return payload;
+}
+
+function distanceKm_(from, to) {
+  const radians = value => value * Math.PI / 180;
+  const latDelta = radians(to.lat - from.lat);
+  const lngDelta = radians(to.lng - from.lng);
+  const a = Math.sin(latDelta / 2) ** 2 +
+    Math.cos(radians(from.lat)) * Math.cos(radians(to.lat)) * Math.sin(lngDelta / 2) ** 2;
+  return Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+}
+
+function getRecommendation_(phcId, medicineId) {
+  const inventory = getDashboard_().inventory;
+  const matches = inventory.filter(row =>
+    (!phcId || row.phc_id === phcId) && (!medicineId || row.medicine_id === medicineId)
+  );
+  const demandFor = row => Number(row.predicted_daily_demand) || Number(row.daily_consumption) || 0;
+  const shortages = matches.map(row => ({
+    row,
+    quantity: Math.ceil(demandFor(row) * 10 - (Number(row.current_stock) || 0))
+  })).filter(candidate => candidate.quantity > 0)
+    .sort((left, right) => left.quantity - right.quantity);
+  const targetCandidate = shortages[0];
+
+  if (!targetCandidate) {
+    return {
+      recommended: false,
+      message: matches.length ? "The selected PHC has enough stock for 10-day coverage." : "No matching inventory record found for recommendation."
+    };
+  }
+
+  const target = targetCandidate.row;
+  const requiredQty = targetCandidate.quantity;
+  const donors = inventory.filter(row =>
+    row.medicine_id === target.medicine_id &&
+    row.phc_id !== target.phc_id &&
+    row.state === target.state
+  ).map(row => ({
+    row,
+    sourceSurplus: (Number(row.current_stock) || 0) - demandFor(row) * 10,
+    distance: distanceKm_(target, row)
+  })).filter(donor => donor.sourceSurplus > 0 && donor.sourceSurplus >= requiredQty)
+    .sort((left, right) => left.distance - right.distance);
+
+  if (!donors.length) {
+    return {
+      recommended: false,
+      shortage_phc: target.phc_id,
+      destination_phc_id: target.phc_id,
+      medicine_id: target.medicine_id,
+      required_quantity: requiredQty,
+      message: "No PHC in the same state has enough surplus for 10-day coverage. District warehouse re-supply needed."
+    };
+  }
+
+  const source = donors[0];
+  const sourceRow = source.row;
+  const demand = demandFor(target);
+  const reason = `Closest PHC with enough ${target.medicine_id} surplus for 10-day coverage.`;
+  return {
+    recommendation_id: `REC-${Date.now()}`,
+    recommended: true,
+    shortage_phc: target.phc_id,
+    shortage_phc_name: target.phc_name,
+    destination_district: target.district,
+    destination_state: target.state,
+    destination_phc_id: target.phc_id,
+    medicine: target.medicine_name,
+    medicine_id: target.medicine_id,
+    current_stock: Number(target.current_stock) || 0,
+    daily_consumption: demand,
+    days_remaining: demand > 0 ? Math.round((target.current_stock / demand) * 10) / 10 : null,
+    required_quantity: requiredQty,
+    recommended_source: sourceRow.phc_id,
+    source_phc_id: sourceRow.phc_id,
+    source_phc_name: sourceRow.phc_name,
+    source_district: sourceRow.district,
+    source_state: sourceRow.state,
+    source_current_stock: Number(sourceRow.current_stock) || 0,
+    source_predicted_daily_demand: demandFor(sourceRow),
+    source_surplus: source.sourceSurplus,
+    distance_km: source.distance,
+    same_district: sourceRow.district === target.district,
+    same_state: true,
+    estimated_transit_hours: Math.max(1, Math.round((source.distance / 35) * 10) / 10),
+    recommended_transfer: requiredQty,
+    quantity: requiredQty,
+    estimated_coverage_days: demand > 0 ? Math.round(((target.current_stock + requiredQty) / demand) * 10) / 10 : null,
+    donor_remaining_stock: sourceRow.current_stock - requiredQty,
+    alternative_donors: donors.slice(1, 4).map(donor => ({
+      source_phc_id: donor.row.phc_id,
+      source_phc_name: donor.row.phc_name,
+      distance_km: donor.distance,
+      source_surplus: donor.sourceSurplus
+    })),
+    status: "PROPOSED",
+    created_at: new Date().toISOString(),
+    reason,
+    rationale: `${reason} Transfer ${requiredQty} units from ${sourceRow.phc_name} (${source.distance} km away in ${sourceRow.district}).`
+  };
 }
 
 function getSevenDayForecastDemand_(projectId, datasetId, location) {

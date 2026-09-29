@@ -109,9 +109,18 @@ async function main() {
   check("POST /recommendation proposes a donor transfer",
     rec.status === 200 && rec.json?.recommended === true && Boolean(rec.json?.recommended_source),
     `${rec.json?.recommended_source} -> ${rec.json?.shortage_phc}, qty ${rec.json?.recommended_transfer}`);
-  check("Recommendation respects donor safety stock",
-    rec.json?.donor_remaining_stock >= 0 && rec.json?.source_surplus > 0,
+  check("Recommendation quantity fills destination to 10 days",
+    rec.json?.recommended_transfer === Math.ceil(rec.json?.daily_consumption * 10 - rec.json?.current_stock) &&
+      rec.json?.quantity === rec.json?.recommended_transfer,
+    `required=${rec.json?.required_quantity}, transfer=${rec.json?.recommended_transfer}`);
+  check("Donor surplus covers the full transfer and stays in the same state",
+    rec.json?.source_surplus >= rec.json?.recommended_transfer && rec.json?.same_state === true &&
+      rec.json?.source_current_stock - rec.json?.recommended_transfer >= rec.json?.source_predicted_daily_demand * 10,
     `surplus ${rec.json?.source_surplus}, donor left ${rec.json?.donor_remaining_stock}`);
+  check("Recommendation selects the closest eligible donor and returns the requested reason",
+    (rec.json?.alternative_donors || []).every(donor => donor.distance_km >= rec.json?.distance_km) &&
+      typeof rec.json?.reason === "string" && rec.json.reason.includes("10-day coverage"),
+    `${rec.json?.distance_km} km, ${rec.json?.reason}`);
   check("Recommendation has rationale + transit estimate",
     typeof rec.json?.rationale === "string" && typeof rec.json?.estimated_transit_hours === "number",
     `${rec.json?.estimated_transit_hours} h over ${rec.json?.distance_km} km`);
@@ -134,6 +143,11 @@ async function main() {
   check("POST /approveTransfer approves and dispatches",
     approve.status === 200 && approve.json?.success === true && /^TRF-/.test(approve.json?.transfer?.transfer_id || ""),
     `dispatch ${approve.json?.transfer?.vehicle_dispatch_id}`);
+  check("Approval reports BigQuery persistence outcomes",
+    typeof approve.json?.inventory_saved_to_bigquery === "boolean" &&
+      typeof approve.json?.recommendation_saved_to_bigquery === "boolean" &&
+      typeof approve.json?.saved_to_firestore === "boolean",
+    `inventory=${approve.json?.inventory_saved_to_bigquery}, recommendation=${approve.json?.recommendation_saved_to_bigquery}, firestore=${approve.json?.saved_to_firestore}`);
   check("POST /approveTransfer moves stock to the deficit PHC",
     approve.json?.stock_movement?.destination_stock_after ===
       (approve.json?.stock_movement?.destination_stock_before + rec.json?.recommended_transfer),
@@ -141,6 +155,16 @@ async function main() {
   check("POST /approveTransfer accepts /recommendation field names (aliasing)",
     approve.status === 200 && approve.json?.transfer?.source_phc_id === rec.json?.recommended_source,
     `source=${approve.json?.transfer?.source_phc_id}`);
+  const staleApprove = await call(baseUrl, "POST", "/approveTransfer", {
+    recommendation_id: rec.json?.recommendation_id,
+    source_phc_id: rec.json?.source_phc_id,
+    destination_phc_id: rec.json?.destination_phc_id,
+    medicine_id: rec.json?.medicine_id,
+    quantity: rec.json?.quantity
+  });
+  check("POST /approveTransfer rejects a stale plan after destination stock changes",
+    staleApprove.status === 409,
+    `status ${staleApprove.status}`);
 
   const badApprove = await call(baseUrl, "POST", "/approveTransfer", { medicine_id: "ORS" });
   check("POST /approveTransfer validates required fields (400)", badApprove.status === 400, `status ${badApprove.status}`);

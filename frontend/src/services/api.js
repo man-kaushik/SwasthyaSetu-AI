@@ -1,11 +1,11 @@
 import { db } from "../firebase";
-import { collection, doc, setDoc, addDoc } from "firebase/firestore";
+import { collection, doc, getDocs, limit, query, setDoc, addDoc, writeBatch } from "firebase/firestore";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
 let dashboardRequestSequence = 0;
 
-function requestAppsScript(route) {
+function requestAppsScript(route, parameters = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = `__swasthyaSetuDashboard_${Date.now()}_${dashboardRequestSequence++}`;
     const script = document.createElement("script");
@@ -23,6 +23,9 @@ function requestAppsScript(route) {
       else resolve(data);
     };
     if (route) endpoint.searchParams.set("route", route);
+    Object.entries(parameters).forEach(([key, value]) => {
+      if (value != null && value !== "") endpoint.searchParams.set(key, String(value));
+    });
     endpoint.searchParams.set("callback", callbackName);
     script.src = endpoint.toString();
     script.async = true;
@@ -48,6 +51,175 @@ export async function getDashboardData() {
   }
 
   throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
+}
+
+async function postBackend(route, payload) {
+  if (!API_BASE_URL) throw new Error("Set VITE_API_BASE_URL to use transfer recommendations.");
+  const response = await fetch(`${API_BASE_URL}/${route}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `${route} request failed (HTTP ${response.status})`);
+  return data;
+}
+
+export function generateTransferRecommendation({ phc_id, medicine_id }) {
+  if (APPS_SCRIPT_URL) {
+    return requestAppsScript("recommendation", { phc_id, medicine_id }).then(async (plan) => {
+      if (!plan.recommended) return plan;
+      try {
+        await setDoc(doc(db, "recommendations", plan.recommendation_id), plan, { merge: true });
+        return { ...plan, saved_to_firestore: true };
+      } catch (error) {
+        return { ...plan, saved_to_firestore: false, firestore_error: error.message || String(error) };
+      }
+    });
+  }
+  return postBackend("recommendation", { phc_id, medicine_id });
+}
+
+export async function getTransferTrackingData() {
+  const [recommendationSnapshot, transferSnapshot] = await Promise.all([
+    getDocs(query(collection(db, "recommendations"), limit(200))),
+    getDocs(query(collection(db, "transfers"), limit(200)))
+  ]);
+  return {
+    recommendations: recommendationSnapshot.docs.map(snapshot => ({ id: snapshot.id, ...snapshot.data() })),
+    transfers: transferSnapshot.docs.map(snapshot => ({ id: snapshot.id, ...snapshot.data() }))
+  };
+}
+
+export async function rejectTransferPlan(plan) {
+  const rejectedAt = new Date().toISOString();
+  await setDoc(doc(db, "recommendations", plan.recommendation_id), {
+    status: "REJECTED",
+    rejected_at: rejectedAt,
+    rejected_by: "Dashboard operator"
+  }, { merge: true });
+  return { success: true, status: "REJECTED", rejected_at: rejectedAt };
+}
+
+export async function completeTransferPlan(transfer) {
+  const completedAt = new Date().toISOString();
+  const batch = writeBatch(db);
+  batch.set(doc(db, "transfers", transfer.transfer_id), {
+    status: "COMPLETED",
+    completed_at: completedAt
+  }, { merge: true });
+  if (transfer.recommendation_id) {
+    batch.set(doc(db, "recommendations", transfer.recommendation_id), {
+      status: "COMPLETED",
+      completed_at: completedAt
+    }, { merge: true });
+  }
+  await batch.commit();
+  return { success: true, status: "COMPLETED", completed_at: completedAt };
+}
+
+export async function approveTransferPlan(plan) {
+  if (APPS_SCRIPT_URL) {
+    const timestamp = new Date().toISOString();
+    const transferId = `TRF-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const quantity = Number(plan.quantity ?? plan.recommended_transfer) || 0;
+    const sourceStockBefore = Number(plan.source_current_stock) || 0;
+    const destinationStockBefore = Number(plan.current_stock) || 0;
+    const transfer = {
+      transfer_id: transferId,
+      recommendation_id: plan.recommendation_id,
+      source_phc_id: plan.source_phc_id,
+      source_phc_name: plan.source_phc_name,
+      destination_phc_id: plan.destination_phc_id,
+      destination_phc_name: plan.shortage_phc_name,
+      district: plan.destination_district,
+      state: plan.destination_state,
+      medicine_id: plan.medicine_id,
+      quantity,
+      distance_km: Number(plan.distance_km) || 0,
+      approved_by: "Dashboard operator",
+      priority: "HIGH",
+      status: "APPROVED_IN_TRANSIT",
+      timestamp
+    };
+    const stockMovement = {
+      source_phc_id: plan.source_phc_id,
+      destination_phc_id: plan.destination_phc_id,
+      source_stock_before: sourceStockBefore,
+      source_stock_after: Math.max(0, sourceStockBefore - quantity),
+      destination_stock_before: destinationStockBefore,
+      destination_stock_after: destinationStockBefore + quantity
+    };
+    const batch = writeBatch(db);
+    batch.set(doc(db, "transfers", transferId), transfer);
+    batch.set(doc(db, "current_inventory", `${plan.source_phc_id}_${plan.medicine_id}`), {
+      phc_id: plan.source_phc_id,
+      medicine_id: plan.medicine_id,
+      current_stock: stockMovement.source_stock_after,
+      timestamp
+    }, { merge: true });
+    batch.set(doc(db, "current_inventory", `${plan.destination_phc_id}_${plan.medicine_id}`), {
+      phc_id: plan.destination_phc_id,
+      medicine_id: plan.medicine_id,
+      current_stock: stockMovement.destination_stock_after,
+      timestamp
+    }, { merge: true });
+    batch.set(doc(db, "recommendations", plan.recommendation_id), {
+      ...plan,
+      status: "APPROVED",
+      approved_at: timestamp,
+      transfer_id: transferId
+    }, { merge: true });
+    await batch.commit();
+    return {
+      success: true,
+      saved_to_firestore: true,
+      saved_to_bigquery: false,
+      inventory_saved_to_bigquery: false,
+      recommendation_saved_to_bigquery: false,
+      firestore_client_fallback: true,
+      transfer,
+      stock_movement: stockMovement
+    };
+  }
+
+  const result = await postBackend("approveTransfer", {
+    recommendation_id: plan.recommendation_id,
+    source_phc_id: plan.source_phc_id,
+    destination_phc_id: plan.destination_phc_id,
+    medicine_id: plan.medicine_id,
+    quantity: plan.quantity ?? plan.recommended_transfer
+  });
+  if (result.saved_to_firestore) return result;
+
+  try {
+    const { transfer, stock_movement: movement } = result;
+    const batch = writeBatch(db);
+    batch.set(doc(db, "transfers", transfer.transfer_id), transfer, { merge: true });
+    batch.set(doc(db, "current_inventory", `${movement.source_phc_id}_${transfer.medicine_id}`), {
+      phc_id: movement.source_phc_id,
+      medicine_id: transfer.medicine_id,
+      current_stock: movement.source_stock_after,
+      timestamp: transfer.timestamp
+    }, { merge: true });
+    batch.set(doc(db, "current_inventory", `${movement.destination_phc_id}_${transfer.medicine_id}`), {
+      phc_id: movement.destination_phc_id,
+      medicine_id: transfer.medicine_id,
+      current_stock: movement.destination_stock_after,
+      timestamp: transfer.timestamp
+    }, { merge: true });
+    if (transfer.recommendation_id) {
+      batch.set(doc(db, "recommendations", transfer.recommendation_id), {
+        status: "APPROVED",
+        approved_at: transfer.timestamp,
+        transfer_id: transfer.transfer_id
+      }, { merge: true });
+    }
+    await batch.commit();
+    return { ...result, saved_to_firestore: true, firestore_client_fallback: true };
+  } catch (firestoreError) {
+    return { ...result, firestore_fallback_error: firestoreError.message || String(firestoreError) };
+  }
 }
 
 export async function getAlertsData() {

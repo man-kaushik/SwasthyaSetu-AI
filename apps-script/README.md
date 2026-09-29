@@ -1,9 +1,11 @@
 # Free Dashboard Endpoint (Google Apps Script)
 
-This endpoint replaces only the dashboard's BigQuery `GET /dashboard` read. It
-runs as the deploying Google account, uses BigQuery read-only scope, returns the
-same `summary` and `inventory` response shape, and caches results for 30 seconds.
-It does not provide the Express write, transfer, Gemini, or Translation routes.
+This endpoint serves dashboard, alert, and transfer-recommendation reads from
+BigQuery using read-only scope. It runs as the deploying Google account and
+caches the inventory snapshot for 30 seconds. Recommendation generation reads
+`current_inventory`, PHC directories, and forecasts; it does not write BigQuery.
+Transfer approval is written by the frontend to Firestore in an atomic batch,
+so this workflow does not require Cloud Run.
 
 ## Deploy
 
@@ -18,10 +20,9 @@ It does not provide the Express write, transfer, Gemini, or Translation routes.
    VITE_APPS_SCRIPT_URL=https://script.google.com/macros/s/DEPLOYMENT_ID/exec
    ```
 
-7. From the repository root, build and deploy Hosting:
-7. Test the alerts response directly at `YOUR_WEB_APP_URL/exec?route=alerts`. It returns a JSON array ordered `CRITICAL`, `WARNING`, then `STABLE`.
-7. Run [`bigquery/seed_sql/05_seed_forecast_results.sql`](../bigquery/seed_sql/05_seed_forecast_results.sql) in BigQuery to create demo forecasts from the current inventory snapshot.
-8. To publish the Apps Script alerts route, replace `Code.gs` with the repository version, then select **Deploy > Manage deployments > Edit > New version > Deploy**. Verify `YOUR_WEB_APP_URL/exec?route=alerts` returns an array ordered `CRITICAL`, `WARNING`, then `STABLE`.
+7. Run these BigQuery seed scripts in order: [`01_seed_phcs.sql`](../bigquery/seed_sql/01_seed_phcs.sql), [`02_seed_medicines.sql`](../bigquery/seed_sql/02_seed_medicines.sql), [`03_seed_current_inventory.sql`](../bigquery/seed_sql/03_seed_current_inventory.sql), [`03b_seed_redistribution_demo.sql`](../bigquery/seed_sql/03b_seed_redistribution_demo.sql), then [`05_seed_forecast_results.sql`](../bigquery/seed_sql/05_seed_forecast_results.sql). The demo reuses existing PHC/medicine IDs and creates shortage, nearest eligible donor, farther eligible donor, and insufficient-donor cases.
+8. Verify `YOUR_WEB_APP_URL/exec?route=alerts` returns risk rows and `YOUR_WEB_APP_URL/exec?route=recommendation&phc_id=MH-PUNE-PHC-003&medicine_id=ORS` selects `MH-PUNE-PHC-011` for the demo scenario.
+   Locally, run `node apps-script/recommendation_smoke_test.js` to check the deterministic donor ranking without Google credentials.
 9. From the repository root, build and deploy Hosting:
 
    ```powershell
@@ -33,3 +34,7 @@ The manifest enables the BigQuery Advanced Service. The BigQuery Sandbox has
 monthly query/storage limits; Apps Script also has per-user execution quotas.
 This path does not require Cloud Run, Cloud Build, Artifact Registry, or placing
 BigQuery credentials in frontend code.
+
+The current repository Firestore rules allow unauthenticated reads and writes
+for demo use. Do not use this configuration with real patient data; restrict
+rules and require operator authentication before production.

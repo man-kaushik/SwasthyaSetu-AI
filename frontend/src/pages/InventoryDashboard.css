@@ -37,7 +37,7 @@
 .dashboard-error button:hover { background: #123f39; }
 .refresh-button:disabled { cursor: wait; opacity: 0.65; }
 
-.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .metric { min-height: 128px; padding: 17px 19px 15px; border: 1px solid #e1e9e2; border-top: 3px solid #45906a; border-radius: 5px; background: rgba(255, 255, 255, 0.94); display: flex; flex-direction: column; align-items: flex-start; }
 .metric-blue { border-top-color: #5484a4; }
 .metric-red { border-top-color: #d46b58; }
@@ -55,7 +55,7 @@
 .search-field input { width: 220px; height: 36px; padding: 0 10px; border: 1px solid #dce5de; border-radius: 4px; outline: none; color: #193330; background: #fbfcfb; font-size: 12px; }
 .search-field input:focus { border-color: #41856b; box-shadow: 0 0 0 2px rgba(65, 133, 107, 0.12); }
 .table-scroll { overflow-x: auto; }
-.inventory-table { width: 100%; min-width: 830px; border-collapse: collapse; text-align: left; }
+.inventory-table { width: 100%; min-width: 1120px; border-collapse: collapse; text-align: left; }
 .inventory-table th { height: 40px; padding: 0 15px; background: #f7f9f7; color: #6b7d76; font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .inventory-table th:first-child,
 .inventory-table td:first-child { padding-left: 19px; }
@@ -69,10 +69,69 @@
 .facility-meta { margin-top: 3px; color: #87948f; font-size: 10px; }
 .numeric-cell { font-variant-numeric: tabular-nums; }
 .risk-tag { display: inline-block; padding: 4px 7px; border-radius: 3px; background: #e9f4ed; color: #33744d; font-size: 9px; font-weight: 800; }
-.risk-critical,
-.risk-stocked_out { background: #fcebe8; color: #b64d3e; }
-.risk-warning,
-.risk-high { background: #fff3df; color: #9b6b1b; }
+.risk-tag.risk-critical { background: #fcebe8; color: #b64d3e; }
+.risk-tag.risk-warning { background: #fff3df; color: #9b6b1b; }
+.risk-tag.risk-stable { background: #e9f4ed; color: #33744d; }
+.action-cell { font-size: 11px !important; font-weight: 700; white-space: nowrap; }
+.action-critical { color: #b64d3e !important; }
+.action-warning { color: #9b6b1b !important; }
+.action-stable { color: #33744d !important; }
+.generated-request { display: inline-block; max-width: 170px; padding: 5px 7px; border: 1px solid #e8d6ab; border-radius: 3px; background: #fff7e6; color: #8a641b; font-size: 9px; font-weight: 800; line-height: 1.3; white-space: normal; }
+.generated-approved_in_transit,
+.generated-in_transit { border-color: #cadde8; background: #edf5f9; color: #426d88; }
+.generated-completed,
+.generated-delivered { border-color: #cce2d1; background: #edf7ef; color: #33744d; }
+.generated-rejected { border-color: #e1d8d5; background: #f4f0ef; color: #80665e; }
+.generate-plan-button { min-height: 30px; padding: 0 9px; border: 1px solid #9b6b1b; border-radius: 4px; background: #fff8e9; color: #80550d; font-size: 10px; font-weight: 750; white-space: nowrap; cursor: pointer; }
+.generate-plan-button:hover:not(:disabled) { background: #fff0cf; }
+.generate-plan-button:disabled { cursor: wait; opacity: 0.65; }
+.transfer-plan { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 19px; border-bottom: 1px solid #e8eeea; background: #f6faf7; }
+.transfer-plan.info { background: #f7f9f7; color: #53665d; }
+.transfer-plan.error { background: #fff4f1; color: #9b4035; }
+.transfer-plan.success { background: #edf7ef; color: #33744d; }
+.transfer-plan-copy { min-width: 0; }
+.transfer-plan-copy h3 { margin: 0; color: #193330; font-size: 14px; font-weight: 750; }
+.transfer-plan-copy p { margin: 6px 0 0; color: #344b45; font-size: 12px; line-height: 1.5; }
+.transfer-plan-copy span { display: block; margin-top: 4px; color: #687a76; font-size: 11px; }
+.transfer-plan-copy .transfer-feedback { display: block; margin-top: 7px; color: #9b4035; font-size: 11px; }
+.transfer-plan > p { margin: 0; font-size: 12px; line-height: 1.5; }
+.transfer-plan-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.transfer-modal-backdrop { position: fixed; inset: 0; z-index: 1300; display: grid; place-items: center; padding: 18px; background: rgba(16, 37, 33, 0.62); animation: transfer-backdrop-in 150ms ease-out both; }
+.transfer-modal { width: min(600px, 100%); max-height: min(90vh, 760px); overflow: auto; padding: 21px 23px 19px; border: 1px solid #dce7dd; border-radius: 6px; background: #fff; box-shadow: 0 20px 70px rgba(13, 39, 32, 0.28); animation: transfer-modal-in 180ms ease-out both; }
+.transfer-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.transfer-modal-header .eyebrow { margin-bottom: 5px; }
+.transfer-modal-header h2 { margin: 0; color: #193330; font-size: 20px; font-weight: 760; }
+.modal-close-button { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 1px solid #dce5de; border-radius: 4px; background: #fff; color: #53665d; font-size: 23px; line-height: 1; cursor: pointer; }
+.modal-close-button:hover:not(:disabled) { background: #f2f7f3; }
+.modal-close-button:disabled { cursor: wait; opacity: 0.6; }
+.transfer-route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; margin-top: 21px; padding: 15px; border: 1px solid #e1e9e2; border-radius: 4px; background: #f8faf8; }
+.transfer-route > div { min-width: 0; }
+.transfer-route > div span,
+.transfer-route > div strong,
+.transfer-route > div small { display: block; }
+.transfer-route > div span { color: #7b8983; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.transfer-route > div strong { margin-top: 5px; overflow-wrap: anywhere; color: #25433b; font-size: 12px; line-height: 1.4; }
+.transfer-route > div small { margin-top: 3px; color: #87948f; font-size: 10px; }
+.route-arrow { color: #41856b; font-size: 20px; font-weight: 700; }
+.transfer-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
+.transfer-facts > div { min-width: 0; padding: 11px 12px; border: 1px solid #e8eeea; border-radius: 4px; }
+.transfer-facts span,
+.transfer-facts strong { display: block; }
+.transfer-facts span { color: #788781; font-size: 10px; font-weight: 650; }
+.transfer-facts strong { margin-top: 5px; overflow-wrap: anywhere; color: #193330; font-size: 13px; line-height: 1.4; }
+.transfer-modal-reason { margin: 15px 0 0; color: #53665d; font-size: 12px; line-height: 1.5; }
+.transfer-modal .transfer-feedback { margin: 10px 0 0; font-size: 11px; line-height: 1.5; }
+.transfer-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 21px; padding-top: 14px; border-top: 1px solid #e8eeea; }
+.approve-transfer-button,
+.cancel-transfer-button { min-height: 34px; padding: 0 11px; border: 1px solid #1a554d; border-radius: 4px; font-size: 11px; font-weight: 750; cursor: pointer; }
+.approve-transfer-button { background: #1a554d; color: #fff; }
+.approve-transfer-button:hover:not(:disabled) { background: #123f39; }
+.cancel-transfer-button { background: #fff; color: #31564b; }
+.cancel-transfer-button:hover:not(:disabled) { background: #f2f7f3; }
+.approve-transfer-button:disabled,
+.cancel-transfer-button:disabled { cursor: wait; opacity: 0.65; }
+@keyframes transfer-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes transfer-modal-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 .table-message { height: 92px !important; color: #7a8983 !important; text-align: center; }
 .table-footer { min-height: 44px; gap: 12px; padding: 9px 19px; border-top: 1px solid #e8eeea; color: #7c8a84; font-size: 10px; }
 .table-footer code { padding: 2px 4px; border-radius: 3px; background: #f1f5f1; color: #53665d; font-family: Consolas, monospace; font-size: 10px; }
@@ -101,4 +160,14 @@
   .search-field input { width: 100%; }
   .table-footer { align-items: flex-start; flex-direction: column; gap: 4px; }
   .table-pagination { width: 100%; justify-content: space-between; padding-top: 5px; }
+  .transfer-plan { align-items: flex-start; flex-direction: column; gap: 12px; padding: 14px; }
+  .transfer-plan-actions { width: 100%; }
+  .approve-transfer-button { flex: 1; }
+  .transfer-modal-backdrop { padding: 10px; }
+  .transfer-modal { padding: 17px 15px 14px; }
+  .transfer-modal-header h2 { font-size: 18px; }
+  .transfer-route { gap: 8px; padding: 11px; }
+  .transfer-route > div strong { font-size: 11px; }
+  .transfer-facts { gap: 7px; }
+  .transfer-facts > div { padding: 9px; }
 }

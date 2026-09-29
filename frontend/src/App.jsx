@@ -14,6 +14,7 @@ import {
 import PHCUpdatePage from './pages/PHCUpdatePage';
 import InventoryDashboard from './pages/InventoryDashboard';
 import AlertsPage from './pages/AlertsPage';
+import TransferTrackingPage from './pages/TransferTrackingPage';
 
 const theme = createTheme({
   palette: {
@@ -68,6 +69,12 @@ function App() {
                 Alerts
               </Button>
               <Button
+                onClick={() => setCurrentView('transfers')}
+                sx={{ color: 'white', bgcolor: currentView === 'transfers' ? 'rgba(255,255,255,0.2)' : 'transparent', fontWeight: 600 }}
+              >
+                Transfers
+              </Button>
+              <Button
                 variant="outlined"
                 onClick={() => setCurrentView('phc-update')}
                 sx={{ borderColor: 'rgba(255,255,255,0.7)', bgcolor: currentView === 'phc-update' ? 'white' : 'transparent', color: currentView === 'phc-update' ? '#0369a1' : 'white', fontWeight: 700 }}
@@ -78,7 +85,13 @@ function App() {
           </Toolbar>
         </AppBar>
 
-          {currentView === 'phc-update' ? <PHCUpdatePage /> : currentView === 'alerts' ? <AlertsPage /> : <InventoryDashboard />}
+          {currentView === 'phc-update'
+            ? <PHCUpdatePage />
+            : currentView === 'alerts'
+              ? <AlertsPage onTransferGenerated={() => setCurrentView('transfers')} />
+              : currentView === 'transfers'
+                ? <TransferTrackingPage />
+                : <InventoryDashboard onTransferGenerated={() => setCurrentView('transfers')} />}
 
         <Box component="footer" sx={{ py: 3, px: 2, mt: 'auto', backgroundColor: '#f1f5f9', borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

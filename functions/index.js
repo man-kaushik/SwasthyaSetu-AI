@@ -708,7 +708,32 @@ async function writeRecommendationToBigQuery(recommendation) {
     });
     return { inserted: true, table: `${projectId}.${BQ_DATASET}.recommendations` };
   } catch (err) {
-    return { inserted: false, reason: err.message || String(err) };
+    try {
+      if (!bigQueryClient) bigQueryClient = createBigQueryClient(projectId);
+      await bigQueryClient.dataset(BQ_DATASET).table("recommendations").insert({
+        recommendation_id: recommendation.recommendation_id,
+        alert_id: null,
+        target_phc_id: recommendation.shortage_phc || recommendation.destination_phc_id || null,
+        donor_phc_id: recommendation.recommended_source || recommendation.source_phc_id || null,
+        medicine_id: recommendation.medicine_id,
+        medicine_name: recommendation.medicine,
+        recommended_quantity: Number(recommendation.recommended_transfer) || 0,
+        distance_km: Number(recommendation.distance_km) || 0,
+        estimated_transit_hours: Number(recommendation.estimated_transit_hours) || 0,
+        donor_remaining_stock: Number(recommendation.donor_remaining_stock) || 0,
+        target_extended_days: Number(recommendation.estimated_coverage_days) || 0,
+        status: recommendation.status || "PROPOSED",
+        created_at: recommendation.created_at || new Date().toISOString()
+      });
+      return {
+        inserted: true,
+        mode: "stream_insert",
+        table: `${projectId}.${BQ_DATASET}.recommendations`
+      };
+    } catch (fallbackError) {
+      console.warn("BigQuery recommendation write skipped:", fallbackError.message || String(fallbackError));
+      return { inserted: false, reason: `${err.message || String(err)} | fallback: ${fallbackError.message || String(fallbackError)}` };
+    }
   }
 }
 
@@ -1102,45 +1127,57 @@ app.post("/recommendation", async (req, res) => {
     const phcs = directories.phcs;
     const medicines = directories.medicines;
     const records = await getInventoryRecords();
-
-    const target = records.find(
-      i => (!phc_id || i.phc_id === phc_id) && (!medicine_id || i.medicine_id === medicine_id)
-    ) || records[0];
+    const forecastDemand = await getSevenDayForecastDemand();
+    const predictedDemand = item => Number(forecastDemand.get(pendingKeyFor(item.phc_id, item.medicine_id))) ||
+      Number(item.daily_consumption) || 0;
+    const candidates = records.filter(item =>
+      (!phc_id || item.phc_id === phc_id) && (!medicine_id || item.medicine_id === medicine_id)
+    );
+    const target = candidates
+      .filter(item => Math.ceil(predictedDemand(item) * 10 - (Number(item.current_stock) || 0)) > 0)
+      .sort((left, right) => {
+        const leftDemand = predictedDemand(left);
+        const rightDemand = predictedDemand(right);
+        return (Number(left.current_stock) / (leftDemand || 1)) - (Number(right.current_stock) / (rightDemand || 1));
+      })[0];
 
     if (!target) {
-      return res.status(404).json({ error: "No inventory record found for recommendation" });
+      return res.json({
+        recommended: false,
+        message: candidates.length
+          ? "The selected PHC has enough stock for 10-day coverage."
+          : "No matching inventory record found for recommendation.",
+        inventory_source: inventorySource
+      });
     }
 
     const targetPhcMeta = findPhc(target.phc_id, phcs);
     const medMeta = findMedicine(target.medicine_id, medicines);
-
-    const targetDailyNeed = Number(target.daily_consumption) || 20;
-    const deficitQuantity = Math.max(0, (targetDailyNeed * 10) - Number(target.current_stock));
+    const targetDailyNeed = predictedDemand(target);
+    const currentStock = Number(target.current_stock) || 0;
+    const requiredQty = Math.ceil(targetDailyNeed * 10 - currentStock);
 
     const donors = records
       .filter(item => item.medicine_id === target.medicine_id && item.phc_id !== target.phc_id)
       .map(item => {
         const donorMeta = findPhc(item.phc_id, phcs);
-        const donorSafetyStock = (findMedicine(item.medicine_id, medicines).safetyStock) || medMeta.safetyStock;
-        const surplus = Math.max(0, Number(item.current_stock) - donorSafetyStock);
+        const donorStock = Number(item.current_stock) || 0;
+        const donorDailyDemand = predictedDemand(item);
         return {
           source_phc_id: item.phc_id,
           source_phc_name: donorMeta.name,
           source_district: donorMeta.district,
           source_state: donorMeta.state,
-          source_current_stock: Number(item.current_stock) || 0,
-          source_safety_stock: donorSafetyStock,
-          source_surplus: surplus,
+          source_current_stock: donorStock,
+          source_predicted_daily_demand: donorDailyDemand,
+          source_surplus: donorStock - donorDailyDemand * 10,
           distance_km: calculateDistanceKm(targetPhcMeta.lat, targetPhcMeta.lng, donorMeta.lat, donorMeta.lng),
-          same_district: donorMeta.district === targetPhcMeta.district
+          same_district: donorMeta.district === targetPhcMeta.district,
+          same_state: donorMeta.state === targetPhcMeta.state
         };
       })
-      .filter(d => d.source_surplus > 0)
-      .sort((a, b) => {
-        if (a.same_district && !b.same_district) return -1;
-        if (!a.same_district && b.same_district) return 1;
-        return a.distance_km - b.distance_km;
-      });
+      .filter(donor => donor.same_state && donor.source_surplus > 0 && donor.source_surplus >= requiredQty)
+      .sort((left, right) => left.distance_km - right.distance_km);
 
     if (donors.length === 0) {
       return res.json({
@@ -1148,15 +1185,18 @@ app.post("/recommendation", async (req, res) => {
         shortage_phc: target.phc_id,
         shortage_phc_name: targetPhcMeta.name,
         medicine_id: target.medicine_id,
-        message: "No neighboring PHC currently has sufficient surplus above safety threshold. Direct district warehouse re-supply needed.",
-        evaluated_donors: 0,
+        destination_phc_id: target.phc_id,
+        required_quantity: requiredQty,
+        message: "No PHC in the same state has enough surplus for 10-day coverage. District warehouse re-supply needed.",
+        evaluated_donors: records.filter(item => item.medicine_id === target.medicine_id && item.phc_id !== target.phc_id).length,
         inventory_source: inventorySource
       });
     }
 
     const optimalSource = donors[0];
-    const transferQty = Math.min(deficitQuantity > 0 ? deficitQuantity : 250, optimalSource.source_surplus);
+    const transferQty = requiredQty;
     const estimatedTransitHours = Math.max(1, Math.round((optimalSource.distance_km / 35) * 10) / 10);
+    const reason = `Closest PHC with enough ${target.medicine_id} surplus for 10-day coverage.`;
 
     const recommendation = {
       recommendation_id: `REC-${Date.now()}`,
@@ -1168,21 +1208,24 @@ app.post("/recommendation", async (req, res) => {
       destination_phc_id: target.phc_id,
       medicine: target.medicine_name || medMeta.name,
       medicine_id: target.medicine_id,
-      current_stock: Number(target.current_stock) || 0,
+      current_stock: currentStock,
       daily_consumption: targetDailyNeed,
-      days_remaining: round1((Number(target.current_stock) || 0) / targetDailyNeed),
-      required_quantity: deficitQuantity || 250,
+      days_remaining: targetDailyNeed > 0 ? round1(currentStock / targetDailyNeed) : null,
+      required_quantity: requiredQty,
       recommended_source: optimalSource.source_phc_id,
       source_phc_id: optimalSource.source_phc_id,
       source_phc_name: optimalSource.source_phc_name,
       source_district: optimalSource.source_district,
       source_current_stock: optimalSource.source_current_stock,
+      source_predicted_daily_demand: optimalSource.source_predicted_daily_demand,
       source_surplus: optimalSource.source_surplus,
       distance_km: optimalSource.distance_km,
       same_district: optimalSource.same_district,
+      same_state: optimalSource.same_state,
       estimated_transit_hours: estimatedTransitHours,
       recommended_transfer: transferQty,
-      estimated_coverage_days: Math.round(transferQty / (targetDailyNeed || 1)),
+      quantity: transferQty,
+      estimated_coverage_days: targetDailyNeed > 0 ? round1((currentStock + transferQty) / targetDailyNeed) : null,
       donor_remaining_stock: optimalSource.source_current_stock - transferQty,
       alternative_donors: donors.slice(1, 4).map(d => ({
         source_phc_id: d.source_phc_id,
@@ -1192,7 +1235,8 @@ app.post("/recommendation", async (req, res) => {
       })),
       status: "PROPOSED",
       created_at: new Date().toISOString(),
-      rationale: `Optimal transfer of ${transferQty} units from ${optimalSource.source_phc_name} (${optimalSource.distance_km} km away in ${optimalSource.source_district}) covers ${targetPhcMeta.name} for ~${Math.round(transferQty / targetDailyNeed)} days while keeping the donor above its ${optimalSource.source_safety_stock}-unit safety stock.`
+      reason,
+      rationale: `${reason} Transfer ${transferQty} units from ${optimalSource.source_phc_name} (${optimalSource.distance_km} km away in ${optimalSource.source_district}).`
     };
 
     // Persist the proposal so POST /approveTransfer can link back to it.
@@ -1307,6 +1351,27 @@ app.post("/approveTransfer", async (req, res) => {
     const sourceRec = buildSide(sourcePhcId);
     const destRec = buildSide(destinationPhcId);
 
+    if (!sourceRec || !destRec) {
+      return res.status(404).json({ error: "Current inventory is unavailable for the source or destination PHC." });
+    }
+    if (sourceMeta.state !== destinationMeta.state) {
+      return res.status(400).json({ error: "Transfers must remain within the same state." });
+    }
+
+    const forecastDemand = await getSevenDayForecastDemand();
+    const sourceDailyDemand = Number(forecastDemand.get(pendingKeyFor(sourcePhcId, medicineId))) ||
+      Number(sourceRec.daily_consumption) || 0;
+    const destinationDailyDemand = Number(forecastDemand.get(pendingKeyFor(destinationPhcId, medicineId))) ||
+      Number(destRec.daily_consumption) || 0;
+    const sourceSurplus = (Number(sourceRec.current_stock) || 0) - sourceDailyDemand * 10;
+    const destinationRequired = Math.max(0, Math.ceil(destinationDailyDemand * 10 - (Number(destRec.current_stock) || 0)));
+    if (sourceSurplus <= 0 || quantityFinal > sourceSurplus) {
+      return res.status(409).json({ error: "The source PHC no longer has enough surplus for 10-day coverage." });
+    }
+    if (destinationRequired <= 0 || quantityFinal > destinationRequired) {
+      return res.status(409).json({ error: "The destination PHC no longer needs this transfer quantity." });
+    }
+
     const sourceBefore = sourceRec ? Number(sourceRec.current_stock) || 0 : null;
     const destBefore = destRec ? Number(destRec.current_stock) || 0 : null;
 
@@ -1326,7 +1391,34 @@ app.post("/approveTransfer", async (req, res) => {
       sourceRec ? insertTelemetryToBigQuery(sourceRec).catch(err => ({ inserted: false, reason: err.message })) : Promise.resolve(null),
       destRec ? insertTelemetryToBigQuery(destRec).catch(err => ({ inserted: false, reason: err.message })) : Promise.resolve(null)
     ]);
-    const bigquerySaved = bigqueryResults.filter(Boolean).some(r => r && r.inserted);
+    const proposedRecommendation = memoryStore.recommendations.find(
+      item => item.recommendation_id === transferRecord.recommendation_id
+    );
+    const approvedRecommendation = {
+      ...(proposedRecommendation || {}),
+      recommendation_id: transferRecord.recommendation_id || transferRecord.transfer_id,
+      shortage_phc: destinationPhcId,
+      destination_phc_id: destinationPhcId,
+      recommended_source: sourcePhcId,
+      source_phc_id: sourcePhcId,
+      medicine: proposedRecommendation?.medicine || medicineId,
+      medicine_id: medicineId,
+      recommended_transfer: quantityFinal,
+      distance_km: transferRecord.distance_km,
+      status: "APPROVED",
+      created_at: transferRecord.timestamp
+    };
+    if (proposedRecommendation) {
+      Object.assign(proposedRecommendation, {
+        status: "APPROVED",
+        approved_at: transferRecord.timestamp,
+        transfer_id: transferRecord.transfer_id,
+        recommended_transfer: quantityFinal
+      });
+    }
+    const recommendationBigQuery = await writeRecommendationToBigQuery(approvedRecommendation);
+    const inventoryBigQuerySaved = bigqueryResults.filter(Boolean).some(r => r && r.inserted);
+    const bigquerySaved = inventoryBigQuerySaved || recommendationBigQuery.inserted;
 
     // 3. Persist to Firestore (dispatch log + adjusted stock balances).
     let firestoreSaved = false;
@@ -1356,6 +1448,8 @@ app.post("/approveTransfer", async (req, res) => {
       message: "Transfer order approved and dispatched into state logistics network.",
       saved_to_firestore: firestoreSaved,
       saved_to_bigquery: bigquerySaved,
+      inventory_saved_to_bigquery: inventoryBigQuerySaved,
+      recommendation_saved_to_bigquery: recommendationBigQuery.inserted,
       inventory_source: inventorySource,
       stock_movement: {
         source_phc_id: sourcePhcId,
