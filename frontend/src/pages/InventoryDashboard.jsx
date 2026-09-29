@@ -8,7 +8,7 @@ const decimal = (value, digits = 1) => value == null || !Number.isFinite(Number(
   ? "—"
   : new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(Number(value));
 
-function InventoryDashboard({ onTransferGenerated, onRaiseTransferRequest, permissions }) {
+function InventoryDashboard({ onTransferGenerated, permissions }) {
   const [dashboard, setDashboard] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -347,14 +347,6 @@ function InventoryDashboard({ onTransferGenerated, onRaiseTransferRequest, permi
                               onClick={() => handleGeneratePlan(row)}
                             >
                               {planLoadingKey === rowKey ? "Finding source..." : "Generate Transfer Plan"}
-                            </button>
-                          ) : permissions?.canRaiseTransferRequest ? (
-                            <button
-                              type="button"
-                              className="generate-plan-button"
-                              onClick={() => onRaiseTransferRequest?.(row)}
-                            >
-                              Raise Transfer Request
                             </button>
                           ) : null}
                         </div>

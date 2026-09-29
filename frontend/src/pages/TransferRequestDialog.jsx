@@ -7,7 +7,7 @@ import { createTransferRequest, getDashboardData } from "../services/api";
 
 export default function TransferRequestDialog({ open, userProfile, initialRow, onClose, onSubmitted }) {
   const [inventory, setInventory] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
@@ -38,7 +38,7 @@ export default function TransferRequestDialog({ open, userProfile, initialRow, o
         const days = Number(initialRow?.days_remaining ?? initialRow?.forecast_days_remaining);
         setForm({
           source_phc_id: source?.phc_id || "",
-          destination_phc_id: destination || rows.find((row) => row.phc_id)?.phc_id || "",
+          destination_phc_id: destination || rows.find((row) => row.phc_id && row.phc_id !== source?.phc_id)?.phc_id || "",
           medicine_id: medicine || source?.medicine_id || rows[0]?.medicine_id || "",
           quantity: String(requestedQuantity),
           priority: initialRow?.risk_level === "CRITICAL" || days <= 3 ? "URGENT" : "HIGH",

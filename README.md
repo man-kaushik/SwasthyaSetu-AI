@@ -76,7 +76,8 @@ available.
 
 The full Express API still contains the write, alert, transfer, Gemini, and
 translation endpoints. They are not served by the Apps Script read-only endpoint.
-PHC Data Entry continues to use the frontend's Firestore path where configured.
+The web app no longer exposes a PHC telemetry data-entry screen; `POST /phcUpdate`
+remains available for existing external integrations and local API tests.
 
 The Apps Script endpoint returns a bounded inventory snapshot and dashboard
 summary. It does not expose arbitrary query parameters or BigQuery write access.

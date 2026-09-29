@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { approveTransferPlan, completeTransferPlan, getTransferRequests, getTransferTrackingData, rejectTransferPlan, updateTransferRequestStatus } from "../services/api";
+import TransferRequestDialog from "./TransferRequestDialog";
 import "./TransferTrackingPage.css";
 
 const format = (value) => new Intl.NumberFormat("en-IN").format(Number(value) || 0);
@@ -41,6 +42,7 @@ function TransferTrackingPage({ currentUser, permissions }) {
   const [requestError, setRequestError] = useState("");
   const [requestActionId, setRequestActionId] = useState("");
   const [requestNotice, setRequestNotice] = useState(null);
+  const [requestDialogOpen, setRequestDialogOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -132,6 +134,12 @@ function TransferTrackingPage({ currentUser, permissions }) {
     }
   }
 
+  function handleRequestSubmitted() {
+    setRequestDialogOpen(false);
+    setRequestLoading(true);
+    setReloadKey((key) => key + 1);
+  }
+
   async function handleApprove(row) {
     setActionId(row.recommendation_id);
     setActionNotice(null);
@@ -193,9 +201,14 @@ function TransferTrackingPage({ currentUser, permissions }) {
           <h1>Transfer tracking</h1>
           <p>Review generated requests and track approved medicine movements.</p>
         </div>
-        <button className="tracking-refresh" type="button" disabled={loading} onClick={() => { setLoading(true); setReloadKey((key) => key + 1); }}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
+        <div className="tracking-heading-actions">
+          {permissions?.canRaiseTransferRequest && <button className="tracking-raise-request" type="button" onClick={() => setRequestDialogOpen(true)}>
+            Raise Transfer Request
+          </button>}
+          <button className="tracking-refresh" type="button" disabled={loading || requestLoading} onClick={() => { setLoading(true); setRequestLoading(true); setReloadKey((key) => key + 1); }}>
+            {loading || requestLoading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
       </header>
 
       {error && <div className="tracking-error" role="alert">{error}</div>}
@@ -333,6 +346,12 @@ function TransferTrackingPage({ currentUser, permissions }) {
         </div>
         <footer className="tracking-footer">Data source: Firestore transfer and recommendation records</footer>
       </section>
+      {requestDialogOpen && <TransferRequestDialog
+        open
+        userProfile={currentUser}
+        onClose={() => setRequestDialogOpen(false)}
+        onSubmitted={handleRequestSubmitted}
+      />}
     </main>
   );
 }

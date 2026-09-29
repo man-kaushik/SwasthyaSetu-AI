@@ -14,11 +14,14 @@
   justify-content: space-between;
   gap: 20px;
 }
+.tracking-heading-actions { display: flex; flex: 0 0 auto; gap: 8px; align-items: center; }
 .tracking-heading { margin-bottom: 25px; }
 .tracking-eyebrow { margin: 0 0 7px; color: #567d55; font-size: 11px; font-weight: 800; letter-spacing: 0.8px; }
 .tracking-heading h1 { margin: 0; color: #193330; font-size: 30px; font-weight: 750; line-height: 1.2; }
 .tracking-heading p:last-child { margin: 8px 0 0; color: #687a76; font-size: 14px; }
 .tracking-refresh { min-height: 36px; padding: 0 13px; border: 1px solid #1a554d; border-radius: 4px; background: #1a554d; color: white; font-size: 12px; font-weight: 700; cursor: pointer; }
+.tracking-raise-request { min-height: 36px; padding: 0 13px; border: 1px solid #1a554d; border-radius: 4px; background: #fff; color: #1a554d; font-size: 12px; font-weight: 700; cursor: pointer; }
+.tracking-raise-request:hover { background: #eff6f1; }
 .tracking-refresh:disabled { cursor: wait; opacity: 0.65; }
 .tracking-error { margin: -8px 0 16px; padding: 11px 13px; border: 1px solid #f0c5bd; border-radius: 4px; background: #fff4f1; color: #9b4035; font-size: 12px; }
 .tracking-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -111,6 +114,8 @@
 @media (max-width: 600px) {
   .transfer-tracking { padding: 26px 15px 34px; }
   .tracking-heading { align-items: flex-start; flex-direction: column; }
+  .tracking-heading-actions { width: 100%; }
+  .tracking-heading-actions button { flex: 1; }
   .tracking-heading h1 { font-size: 26px; }
   .tracking-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .tracking-metric { min-height: 78px; }
