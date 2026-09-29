@@ -80,6 +80,67 @@ export function generateTransferRecommendation({ phc_id, medicine_id }) {
   return postBackend("recommendation", { phc_id, medicine_id });
 }
 
+export async function explainAlert(alertData, language = "English") {
+  const directKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+  if (directKey) {
+    const prompt = `
+      Explain this health stock alert in very simple language for a doctor or PHC staff.
+      Data:
+      ${JSON.stringify(alertData, null, 2)}
+      Return valid JSON only with keys:
+      - explanation
+      - root_cause
+      - action_recommendation
+      - urgency
+      Keep it short and practical.
+      Use the language: ${language}
+    `;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${directKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error?.message || "Gemini request failed from the browser.");
+    }
+
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const cleaned = String(text).replace(/```json/g, "").replace(/```/g, "").trim();
+
+    try {
+      return JSON.parse(cleaned);
+    } catch (error) {
+      return {
+        explanation: text || "This alert needs attention due to a possible medicine shortage.",
+        root_cause: "Likely stock mismatch or demand surge",
+        action_recommendation: "Review local stock and arrange replenishment quickly.",
+        urgency: "HIGH"
+      };
+    }
+  }
+
+  if (API_BASE_URL) {
+    return postBackend("explainAlert", { alertData, language });
+  }
+
+  const phcName = alertData?.phc_name || alertData?.phc_id || "PHC";
+  const medName = alertData?.medicine_name || alertData?.medicine_id || "medicine";
+  const days = alertData?.days_remaining || 2;
+
+  return {
+    explanation: `${phcName} is likely facing a shortage of ${medName}. The current stock may run out in about ${days} days, so it needs immediate attention.`,
+    root_cause: "Demand is rising faster than stock can be replenished.",
+    action_recommendation: "Increase stock review and arrange quick replenishment or transfer from a nearby facility.",
+    urgency: days <= 3 ? "CRITICAL" : "HIGH"
+  };
+}
+
 export async function getTransferTrackingData() {
   const [recommendationSnapshot, transferSnapshot] = await Promise.all([
     getDocs(query(collection(db, "recommendations"), limit(200))),

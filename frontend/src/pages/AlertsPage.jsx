@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { generateTransferRecommendation, getAlertsData, getTransferTrackingData } from "../services/api";
+import { explainAlert, generateTransferRecommendation, getAlertsData, getTransferTrackingData } from "../services/api";
 import "./AlertsPage.css";
 
 const format = (value, digits = 0) => new Intl.NumberFormat("en-IN", {
@@ -21,6 +21,8 @@ function AlertsPage({ onTransferGenerated }) {
   const [transferStatuses, setTransferStatuses] = useState({});
   const [planLoadingKey, setPlanLoadingKey] = useState("");
   const [transferNotice, setTransferNotice] = useState(null);
+  const [alertExplanations, setAlertExplanations] = useState({});
+  const [explanationLoadingKey, setExplanationLoadingKey] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -80,6 +82,25 @@ function AlertsPage({ onTransferGenerated }) {
       setTransferNotice({ kind: "error", text: requestError.message || "Could not generate a transfer plan." });
     } finally {
       setPlanLoadingKey("");
+    }
+  }
+
+  async function handleExplainAlert(row) {
+    const key = `${row.phc_id}-${row.medicine_id}`;
+    if (explanationLoadingKey === key) return;
+
+    setExplanationLoadingKey(key);
+    try {
+      const response = await explainAlert(row, "English");
+      const explanationText = response?.explanation || response?.phc_sms_message || "No clear explanation is available for this alert right now.";
+      setAlertExplanations((current) => ({ ...current, [key]: explanationText }));
+    } catch (requestError) {
+      setAlertExplanations((current) => ({
+        ...current,
+        [key]: requestError.message || "The AI explanation could not be generated at the moment."
+      }));
+    } finally {
+      setExplanationLoadingKey("");
     }
   }
 
@@ -151,34 +172,53 @@ function AlertsPage({ onTransferGenerated }) {
 
         <div className="alerts-table-scroll">
           <table className="alerts-table">
-            <thead><tr><th>Facility</th><th>Area</th><th>Medicine</th><th>Stock</th><th>Forecast / day</th><th>Days remaining</th><th>Risk</th><th>Action</th></tr></thead>
+            <thead><tr><th>Facility</th><th>Area</th><th>Medicine</th><th>Stock</th><th>Forecast / day</th><th>Days remaining</th><th>Risk</th><th>Why this alert?</th><th>Action</th></tr></thead>
             <tbody>
-              {loading && !alerts.length ? <tr><td colSpan="8" className="alerts-empty">Loading forecast-based alerts...</td></tr> :
-                visibleAlerts.length ? visibleAlerts.map((row) => (
-                  <tr key={`${row.phc_id}-${row.medicine_id}`}>
-                    <td><strong>{row.phc_name || row.phc_id}</strong><small>{row.phc_id}</small></td>
-                    <td><strong>{row.district || "—"}</strong><small>{row.state || "—"}</small></td>
-                    <td><strong>{row.medicine_name || row.medicine_id}</strong><small>{row.medicine_id}</small></td>
-                    <td className="alerts-number">{format(row.current_stock)}</td>
-                    <td className="alerts-number">{format(row.predicted_daily_demand, 2)}</td>
-                    <td className="alerts-number">{row.days_remaining == null ? "—" : format(row.days_remaining, 2)}</td>
-                    <td><span className={`alert-risk risk-${String(row.risk_level || "stable").toLowerCase()}`}>{row.risk_level || "STABLE"}</span></td>
-                    <td>
-                      {row.risk_level === "STABLE" ? "Monitor" : transferStatuses[`${row.phc_id}_${row.medicine_id}`] ? (
-                        <span className={`alerts-generated alerts-generated-${String(transferStatuses[`${row.phc_id}_${row.medicine_id}`]).toLowerCase()}`}>
-                          {transferStatuses[`${row.phc_id}_${row.medicine_id}`] === "PROPOSED" ? "Approval Raised" :
-                            ["APPROVED_IN_TRANSIT", "IN_TRANSIT"].includes(transferStatuses[`${row.phc_id}_${row.medicine_id}`]) ? "In Transit" :
-                            ["COMPLETED", "DELIVERED"].includes(transferStatuses[`${row.phc_id}_${row.medicine_id}`]) ? "Completed" :
-                            transferStatuses[`${row.phc_id}_${row.medicine_id}`] === "REJECTED" ? "Rejected" : "Request Raised"}
-                        </span>
-                      ) : (
-                        <button type="button" className="alerts-generate-plan" disabled={Boolean(planLoadingKey)} onClick={() => handleGeneratePlan(row)}>
-                          {planLoadingKey === `${row.phc_id}-${row.medicine_id}` ? "Finding source..." : "Generate Transfer Plan"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )) : <tr><td colSpan="8" className="alerts-empty">{error ? "Alerts could not be loaded." : "No records match these filters."}</td></tr>}
+              {loading && !alerts.length ? <tr><td colSpan="9" className="alerts-empty">Loading forecast-based alerts...</td></tr> :
+                visibleAlerts.length ? visibleAlerts.map((row) => {
+                  const alertKey = `${row.phc_id}-${row.medicine_id}`;
+                  const explanation = alertExplanations[alertKey];
+                  const transferState = transferStatuses[`${row.phc_id}_${row.medicine_id}`];
+                  return (
+                    <tr key={alertKey}>
+                      <td><strong>{row.phc_name || row.phc_id}</strong><small>{row.phc_id}</small></td>
+                      <td><strong>{row.district || "—"}</strong><small>{row.state || "—"}</small></td>
+                      <td><strong>{row.medicine_name || row.medicine_id}</strong><small>{row.medicine_id}</small></td>
+                      <td className="alerts-number">{format(row.current_stock)}</td>
+                      <td className="alerts-number">{format(row.predicted_daily_demand, 2)}</td>
+                      <td className="alerts-number">{row.days_remaining == null ? "—" : format(row.days_remaining, 2)}</td>
+                      <td><span className={`alert-risk risk-${String(row.risk_level || "stable").toLowerCase()}`}>{row.risk_level || "STABLE"}</span></td>
+                      <td>
+                        <div className="alert-explain-wrap">
+                          <button
+                            type="button"
+                            className="alert-explain-button"
+                            onClick={() => handleExplainAlert(row)}
+                            disabled={explanationLoadingKey === alertKey}
+                            aria-label={`Why this alert for ${row.medicine_name || row.medicine_id}`}
+                          >
+                            {explanationLoadingKey === alertKey ? "..." : "?"}
+                          </button>
+                          {explanation && <div className="alert-explain-text">{explanation}</div>}
+                        </div>
+                      </td>
+                      <td>
+                        {row.risk_level === "STABLE" ? "Monitor" : transferState ? (
+                          <span className={`alerts-generated alerts-generated-${String(transferState).toLowerCase()}`}>
+                            {transferState === "PROPOSED" ? "Approval Raised" :
+                              ["APPROVED_IN_TRANSIT", "IN_TRANSIT"].includes(transferState) ? "In Transit" :
+                              ["COMPLETED", "DELIVERED"].includes(transferState) ? "Completed" :
+                              transferState === "REJECTED" ? "Rejected" : "Request Raised"}
+                          </span>
+                        ) : (
+                          <button type="button" className="alerts-generate-plan" disabled={Boolean(planLoadingKey)} onClick={() => handleGeneratePlan(row)}>
+                            {planLoadingKey === alertKey ? "Finding source..." : "Generate Transfer Plan"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }) : <tr><td colSpan="9" className="alerts-empty">{error ? "Alerts could not be loaded." : "No records match these filters."}</td></tr>}
             </tbody>
           </table>
         </div>
