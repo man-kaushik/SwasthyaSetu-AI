@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { approveTransferPlan, completeTransferPlan, getTransferTrackingData, rejectTransferPlan } from "../services/api";
+import { approveTransferPlan, completeTransferPlan, getTransferRequests, getTransferTrackingData, rejectTransferPlan, updateTransferRequestStatus } from "../services/api";
 import "./TransferTrackingPage.css";
 
 const format = (value) => new Intl.NumberFormat("en-IN").format(Number(value) || 0);
@@ -27,7 +27,7 @@ function statusStep(status) {
   return 0;
 }
 
-function TransferTrackingPage() {
+function TransferTrackingPage({ currentUser, permissions }) {
   const [rows, setRows] = useState([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -36,6 +36,11 @@ function TransferTrackingPage() {
   const [expandedId, setExpandedId] = useState("");
   const [actionId, setActionId] = useState("");
   const [actionNotice, setActionNotice] = useState(null);
+  const [requests, setRequests] = useState([]);
+  const [requestLoading, setRequestLoading] = useState(true);
+  const [requestError, setRequestError] = useState("");
+  const [requestActionId, setRequestActionId] = useState("");
+  const [requestNotice, setRequestNotice] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -83,6 +88,22 @@ function TransferTrackingPage() {
     return () => { active = false; };
   }, [reloadKey]);
 
+  useEffect(() => {
+    let active = true;
+    getTransferRequests(currentUser)
+      .then((items) => {
+        if (active) {
+          setRequests(items);
+          setRequestError("");
+        }
+      })
+      .catch((requestError) => {
+        if (active) setRequestError(requestError.message || "Could not load transfer requests.");
+      })
+      .finally(() => { if (active) setRequestLoading(false); });
+    return () => { active = false; };
+  }, [currentUser, reloadKey]);
+
   const filteredRows = rows.filter((row) => {
     if (filter === "all") return true;
     if (filter === "proposed") return row.status === "PROPOSED";
@@ -95,6 +116,21 @@ function TransferTrackingPage() {
   const activeCount = rows.filter((row) => ["APPROVED_IN_TRANSIT", "IN_TRANSIT"].includes(row.status)).length;
   const completedCount = rows.filter((row) => ["COMPLETED", "DELIVERED"].includes(row.status)).length;
   const rejectedCount = rows.filter((row) => row.status === "REJECTED").length;
+  const pendingRequestCount = requests.filter((request) => request.status === "pending").length;
+
+  async function handleRequestReview(request, status) {
+    setRequestActionId(request.id);
+    setRequestNotice(null);
+    try {
+      const updated = await updateTransferRequestStatus(request, status, currentUser);
+      setRequests((current) => current.map((item) => item.id === request.id ? updated : item));
+      setRequestNotice({ kind: "success", text: `Request ${status}.` });
+    } catch (requestActionError) {
+      setRequestNotice({ kind: "error", text: requestActionError.message || "Could not update this request." });
+    } finally {
+      setRequestActionId("");
+    }
+  }
 
   async function handleApprove(row) {
     setActionId(row.recommendation_id);
@@ -171,6 +207,45 @@ function TransferTrackingPage() {
         <article className="tracking-metric rejected"><span>Rejected</span><strong>{format(rejectedCount)}</strong></article>
       </section>
 
+      <section className="tracking-section request-inbox">
+        <div className="tracking-toolbar">
+          <div>
+            <h2>{permissions?.canApproveTransfers ? "Response Viewer requests" : "My transfer requests"}</h2>
+            <p>{permissions?.canApproveTransfers ? `${format(pendingRequestCount)} pending review` : `${format(requests.length)} requests raised by your account`}</p>
+          </div>
+          {requestNotice && <p className={`tracking-action-notice ${requestNotice.kind}`} role={requestNotice.kind === "error" ? "alert" : "status"}>{requestNotice.text}</p>}
+        </div>
+        {requestError && <div className="tracking-error" role="alert">{requestError}</div>}
+        {requestLoading ? <p className="request-empty">Loading requests...</p> : requests.length ? (
+          <div className="request-list">
+            {requests.map((request) => (
+              <article className="request-card" key={request.id}>
+                <div className="request-card-heading">
+                  <div>
+                    <strong>{request.destination_phc_name || request.destination_phc_id}</strong>
+                    <small>{request.requester_name} · {formatDate(request.created_at)}</small>
+                  </div>
+                  <span className={`request-status request-${request.status}`}>{request.status}</span>
+                </div>
+                <p>{request.source_phc_name} → {request.destination_phc_name}</p>
+                <p><strong>{format(request.quantity)} {request.medicine_name}</strong> · {request.priority} priority</p>
+                <p className="request-reason">{request.reason}</p>
+                {permissions?.canApproveTransfers && request.status === "pending" && (
+                  <div className="tracking-actions">
+                    <button type="button" className="tracking-reject" disabled={Boolean(requestActionId)} onClick={() => handleRequestReview(request, "rejected")}>
+                      {requestActionId === request.id ? "Saving..." : "Reject"}
+                    </button>
+                    <button type="button" className="tracking-approve" disabled={Boolean(requestActionId)} onClick={() => handleRequestReview(request, "approved")}>
+                      {requestActionId === request.id ? "Saving..." : "Approve"}
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        ) : <p className="request-empty">No transfer requests yet.</p>}
+      </section>
+
       <section className="tracking-section">
         <div className="tracking-toolbar">
           <div>
@@ -235,13 +310,13 @@ function TransferTrackingPage() {
                               {row.alternative_donors?.length > 0 && <p className="tracking-rationale"><strong>Other eligible PHCs:</strong> {row.alternative_donors.map(donor => `${donor.source_phc_name} (${format(donor.distance_km)} km, ${format(donor.source_surplus)} surplus)`).join(" · ")}</p>}
                               {row.reason && <p className="tracking-reason">{row.reason}</p>}
                               {actionNotice?.id === row.recommendation_id && <p className={`tracking-action-notice ${actionNotice.kind}`} role={actionNotice.kind === "error" ? "alert" : "status"}>{actionNotice.text}</p>}
-                              {row.status === "PROPOSED" && (
+                              {permissions?.canApproveTransfers && row.status === "PROPOSED" && (
                                 <div className="tracking-actions">
                                   <button type="button" className="tracking-reject" disabled={Boolean(actionId)} onClick={() => handleReject(row)}>{actionId === row.recommendation_id ? "Saving..." : "Reject"}</button>
                                   <button type="button" className="tracking-approve" disabled={Boolean(actionId)} onClick={() => handleApprove(row)}>{actionId === row.recommendation_id ? "Saving..." : "Approve Transfer"}</button>
                                 </div>
                               )}
-                              {["APPROVED_IN_TRANSIT", "IN_TRANSIT"].includes(row.status) && (
+                              {permissions?.canUpdateStock && ["APPROVED_IN_TRANSIT", "IN_TRANSIT"].includes(row.status) && (
                                 <div className="tracking-actions">
                                   <button type="button" className="tracking-complete" disabled={Boolean(actionId)} onClick={() => handleComplete(row)}>{actionId === row.transfer_id ? "Saving..." : "Complete Transfer"}</button>
                                 </div>

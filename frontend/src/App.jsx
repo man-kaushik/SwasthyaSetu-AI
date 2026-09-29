@@ -13,13 +13,16 @@ import {
   Alert
 } from '@mui/material';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
-import { auth } from './firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
+import { getRoleForEmail, getRolePermissions, ROLE_DESCRIPTIONS, ROLE_LABELS } from './auth/roles';
 import PHCUpdatePage from './pages/PHCUpdatePage';
 import InventoryDashboard from './pages/InventoryDashboard';
 import AlertsPage from './pages/AlertsPage';
 import TransferTrackingPage from './pages/TransferTrackingPage';
 import NationalMapPage from './pages/NationalMapPage';
 import AddDistrictPage from './pages/AddDistrictPage';
+import TransferRequestDialog from './pages/TransferRequestDialog';
 
 const theme = createTheme({
   palette: {
@@ -44,9 +47,58 @@ const theme = createTheme({
 function App() {
   const [currentView, setCurrentView] = useState('home');
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requestContext, setRequestContext] = useState(null);
+  const permissions = getRolePermissions(profile?.role);
 
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!active) return;
+      setUser(firebaseUser);
+      setProfile(null);
+      setAuthError('');
+      setAuthLoading(true);
+      if (!firebaseUser) {
+        setAuthLoading(false);
+        return;
+      }
+
+      const email = String(firebaseUser.email || '').toLowerCase();
+      const role = getRoleForEmail(email);
+      if (!role) {
+        setAuthError('This Google account is not assigned an application role.');
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        const profileRef = doc(db, 'users', firebaseUser.uid);
+        const existing = await getDoc(profileRef);
+        const existingData = existing.exists() ? existing.data() : {};
+        const now = new Date().toISOString();
+        const nextProfile = {
+          name: firebaseUser.displayName || email,
+          email,
+          role,
+          location: existingData.location || '',
+          created_at: existingData.created_at || now,
+          updated_at: now
+        };
+        await setDoc(profileRef, nextProfile, { merge: true });
+        if (active) setProfile({ uid: firebaseUser.uid, ...nextProfile });
+      } catch (error) {
+        console.error('Could not load the signed-in user role:', error);
+        if (active) setAuthError('Could not load your role profile. Check Firebase access and retry.');
+      } finally {
+        if (active) setAuthLoading(false);
+      }
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   async function handleAuth() {
     setAuthError('');
@@ -99,22 +151,31 @@ function App() {
               >
                 Transfers
               </Button>
-              <Button
+              {permissions.canManageDistricts && <Button
                 variant="outlined"
                 onClick={() => setCurrentView('add-district')}
                 sx={{ borderColor: 'rgba(255,255,255,0.7)', bgcolor: currentView === 'add-district' ? 'white' : 'transparent', color: currentView === 'add-district' ? '#0369a1' : 'white', fontWeight: 700 }}
               >
                 Add District
-              </Button>
-              <Button
+              </Button>}
+              {permissions.canUpdateStock && <Button
                 variant="outlined"
                 onClick={() => setCurrentView('phc-update')}
                 sx={{ borderColor: 'rgba(255,255,255,0.7)', bgcolor: currentView === 'phc-update' ? 'white' : 'transparent', color: currentView === 'phc-update' ? '#0369a1' : 'white', fontWeight: 700 }}
               >
                 PHC Data Entry
-              </Button>
-              <Button onClick={handleAuth} sx={{ color: 'white', fontWeight: 700 }}>
-                {user ? 'Sign out' : 'Google sign in'}
+              </Button>}
+              {permissions.canRaiseTransferRequest && <Button onClick={() => { setRequestContext(null); setRequestOpen(true); }} sx={{ color: 'white', fontWeight: 700 }}>
+                Raise Transfer Request
+              </Button>}
+              {profile && <Chip
+                label={`${ROLE_LABELS[profile.role]} · ${ROLE_DESCRIPTIONS[profile.role]}`}
+                size="small"
+                sx={{ color: 'white', borderColor: 'rgba(255,255,255,.55)', fontWeight: 700 }}
+                variant="outlined"
+              />}
+              <Button onClick={handleAuth} disabled={authLoading} sx={{ color: 'white', fontWeight: 700 }}>
+                {authLoading ? 'Checking role...' : user ? 'Sign out' : 'Google sign in'}
               </Button>
             </Stack>
           </Toolbar>
@@ -122,16 +183,24 @@ function App() {
 
           {authError && <Alert severity="error" onClose={() => setAuthError('')}>{authError}</Alert>}
           {currentView === 'phc-update'
-            ? <PHCUpdatePage />
+            ? permissions.canUpdateStock ? <PHCUpdatePage /> : <InventoryDashboard permissions={permissions} currentUser={profile} />
             : currentView === 'map'
               ? <NationalMapPage />
               : currentView === 'add-district'
-                ? <AddDistrictPage user={user} />
+                ? permissions.canManageDistricts ? <AddDistrictPage user={profile} /> : <InventoryDashboard permissions={permissions} currentUser={profile} />
                 : currentView === 'alerts'
-              ? <AlertsPage onTransferGenerated={() => setCurrentView('transfers')} />
+              ? <AlertsPage permissions={permissions} currentUser={profile} onRaiseTransferRequest={(row) => { setRequestContext(row); setRequestOpen(true); }} onTransferGenerated={() => setCurrentView('transfers')} />
               : currentView === 'transfers'
-                ? <TransferTrackingPage />
-                : <InventoryDashboard onTransferGenerated={() => setCurrentView('transfers')} />}
+                ? <TransferTrackingPage currentUser={profile} permissions={permissions} />
+                : <InventoryDashboard permissions={permissions} currentUser={profile} onRaiseTransferRequest={(row) => { setRequestContext(row); setRequestOpen(true); }} onTransferGenerated={() => setCurrentView('transfers')} />}
+
+          {requestOpen && <TransferRequestDialog
+            open={requestOpen}
+            userProfile={profile}
+            initialRow={requestContext}
+            onClose={() => setRequestOpen(false)}
+            onSubmitted={() => { setRequestOpen(false); setCurrentView('transfers'); }}
+          />}
 
         <Box component="footer" sx={{ py: 3, px: 2, mt: 'auto', backgroundColor: '#f1f5f9', borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

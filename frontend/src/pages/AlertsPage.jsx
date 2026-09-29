@@ -8,7 +8,7 @@ const format = (value, digits = 0) => new Intl.NumberFormat("en-IN", {
 }).format(Number(value) || 0);
 const riskRank = { CRITICAL: 0, WARNING: 1, STABLE: 2 };
 
-function AlertsPage({ onTransferGenerated }) {
+function AlertsPage({ onTransferGenerated, onRaiseTransferRequest, permissions }) {
   const [alerts, setAlerts] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -231,11 +231,15 @@ function AlertsPage({ onTransferGenerated }) {
                               ["COMPLETED", "DELIVERED"].includes(transferState) ? "Completed" :
                               transferState === "REJECTED" ? "Rejected" : "Request Raised"}
                           </span>
-                        ) : (
+                        ) : permissions?.canGenerateTransferPlan ? (
                           <button type="button" className="alerts-generate-plan" disabled={Boolean(planLoadingKey)} onClick={() => handleGeneratePlan(row)}>
                             {planLoadingKey === alertKey ? "Finding source..." : "Generate Transfer Plan"}
                           </button>
-                        )}
+                        ) : permissions?.canRaiseTransferRequest ? (
+                          <button type="button" className="alerts-generate-plan" onClick={() => onRaiseTransferRequest?.(row)}>
+                            Raise Transfer Request
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   );

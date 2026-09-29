@@ -1,10 +1,17 @@
-import { db } from "../firebase";
-import { collection, doc, getDoc, getDocs, limit, query, setDoc, addDoc, writeBatch } from "firebase/firestore";
+import { auth, db } from "../firebase";
+import { collection, doc, getDoc, getDocs, limit, query, setDoc, addDoc, updateDoc, where, writeBatch } from "firebase/firestore";
+import { getRoleForEmail } from "../auth/roles";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
 const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
 let dashboardRequestSequence = 0;
+
+function requireOperationsManager() {
+  if (getRoleForEmail(auth.currentUser?.email) !== "operations") {
+    throw new Error("Only the Operations Manager can perform this action.");
+  }
+}
 
 function requestAppsScript(route, parameters = {}) {
   return new Promise((resolve, reject) => {
@@ -134,6 +141,7 @@ async function mergeFirestoreOperationalData(dashboard) {
 }
 
 export async function saveDistrictSupplies({ districtName, state, districtCode, phc, supplies, existingPhcIds = [] }) {
+    requireOperationsManager();
   const cleanDistrict = String(districtName || "").trim();
   const cleanState = String(state || "").trim();
   const cleanPhcId = String(phc?.phc_id || "").trim();
@@ -211,9 +219,13 @@ export async function saveDistrictSupplies({ districtName, state, districtCode, 
 
 async function postBackend(route, payload) {
   if (!API_BASE_URL) throw new Error("Set VITE_API_BASE_URL to use transfer recommendations.");
+  const idToken = await auth.currentUser?.getIdToken();
   const response = await fetch(`${API_BASE_URL}/${route}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+    },
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
@@ -262,6 +274,7 @@ async function requestGeminiInteraction(prompt) {
 }
 
 export function generateTransferRecommendation({ phc_id, medicine_id }) {
+    requireOperationsManager();
   if (APPS_SCRIPT_URL) {
     return requestAppsScript("recommendation", { phc_id, medicine_id }).then(async (plan) => {
       if (!plan.recommended) return plan;
@@ -388,7 +401,67 @@ export async function getTransferTrackingData() {
   };
 }
 
+export async function createTransferRequest(request, userProfile) {
+  if (!userProfile?.uid || !userProfile?.email || !["operations", "viewer"].includes(userProfile.role)) {
+    throw new Error("Sign in with an assigned role before raising a transfer request.");
+  }
+  const quantity = Number(request.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1) throw new Error("Enter a whole-number quantity greater than zero.");
+  if (!request.source_phc_id || !request.destination_phc_id || request.source_phc_id === request.destination_phc_id) {
+    throw new Error("Choose different source and destination PHCs.");
+  }
+  if (!request.medicine_id || !String(request.reason || "").trim()) {
+    throw new Error("Choose a medicine and add a short reason.");
+  }
+
+  const record = {
+    requester_uid: userProfile.uid,
+    requester_email: userProfile.email,
+    requester_name: userProfile.name || userProfile.email,
+    source_phc_id: request.source_phc_id,
+    source_phc_name: request.source_phc_name,
+    destination_phc_id: request.destination_phc_id,
+    destination_phc_name: request.destination_phc_name,
+    resource_type: "medicine",
+    medicine_id: request.medicine_id,
+    medicine_name: request.medicine_name,
+    quantity,
+    priority: request.priority,
+    reason: String(request.reason).trim().slice(0, 500),
+    status: "pending",
+    created_at: new Date().toISOString()
+  };
+  const result = await addDoc(collection(db, "transfer_requests"), record);
+  return { id: result.id, ...record };
+}
+
+export async function getTransferRequests(userProfile) {
+  if (!userProfile?.uid || !["operations", "viewer"].includes(userProfile.role)) return [];
+  const requests = collection(db, "transfer_requests");
+  const requestQuery = userProfile.role === "operations"
+    ? query(requests, limit(200))
+    : query(requests, where("requester_uid", "==", userProfile.uid), limit(100));
+  const snapshot = await getDocs(requestQuery);
+  return snapshot.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+}
+
+export async function updateTransferRequestStatus(request, status, userProfile) {
+  requireOperationsManager();
+  if (!request?.id || !["approved", "rejected"].includes(status)) throw new Error("Invalid transfer request action.");
+  const reviewedAt = new Date().toISOString();
+  const reviewedBy = userProfile?.email || auth.currentUser?.email;
+  await updateDoc(doc(db, "transfer_requests", request.id), {
+    status,
+    reviewed_by: reviewedBy,
+    reviewed_at: reviewedAt
+  });
+  return { ...request, status, reviewed_by: reviewedBy, reviewed_at: reviewedAt };
+}
+
 export async function rejectTransferPlan(plan) {
+    requireOperationsManager();
   const rejectedAt = new Date().toISOString();
   await setDoc(doc(db, "recommendations", plan.recommendation_id), {
     status: "REJECTED",
@@ -399,6 +472,7 @@ export async function rejectTransferPlan(plan) {
 }
 
 export async function completeTransferPlan(transfer) {
+    requireOperationsManager();
   const completedAt = new Date().toISOString();
   const batch = writeBatch(db);
   batch.set(doc(db, "transfers", transfer.transfer_id), {
@@ -416,6 +490,7 @@ export async function completeTransferPlan(transfer) {
 }
 
 export async function approveTransferPlan(plan) {
+    requireOperationsManager();
   if (APPS_SCRIPT_URL) {
     const timestamp = new Date().toISOString();
     const transferId = `TRF-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
@@ -582,13 +657,17 @@ export const SAMPLE_MEDICINES = [
 ];
 
 export async function submitPHCUpdate(payload) {
+    requireOperationsManager();
   // 1. Backend API first (writes to Firestore + BigQuery in one hop)
   if (API_BASE_URL) {
     let response = null;
     try {
       response = await fetch(`${API_BASE_URL}/phcUpdate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${await auth.currentUser?.getIdToken() || ""}`
+        },
         body: JSON.stringify(payload)
       });
     } catch (err) {

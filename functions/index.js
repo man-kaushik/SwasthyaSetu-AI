@@ -773,6 +773,23 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
+async function requireOperationsManager(req, res, next) {
+  const authorization = String(req.get("authorization") || "");
+  const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!idToken) return res.status(401).json({ error: "Sign in as an Operations Manager to perform this action." });
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    if (String(decodedToken.email || "").toLowerCase() !== "ms4055028@gmail.com") {
+      return res.status(403).json({ error: "Only the Operations Manager can perform this action." });
+    }
+    req.authUser = decodedToken;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: "Your sign-in could not be verified. Please sign in again." });
+  }
+}
+
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
@@ -897,7 +914,7 @@ app.get("/dashboard", async (req, res) => {
 });
 
 // POST /phcUpdate
-app.post("/phcUpdate", async (req, res) => {
+app.post("/phcUpdate", requireOperationsManager, async (req, res) => {
   try {
     const {
       phc_id,
@@ -1132,7 +1149,7 @@ app.get("/alerts", async (req, res) => {
 // POST /recommendation
 // Matches a deficit facility with the best surplus donor (same district first,
 // then shortest Haversine distance) while preserving donor safety stock.
-app.post("/recommendation", async (req, res) => {
+app.post("/recommendation", requireOperationsManager, async (req, res) => {
   try {
     const { phc_id, medicine_id } = req.body || {};
     const directories = await loadDirectories();
@@ -1283,7 +1300,7 @@ app.post("/recommendation", async (req, res) => {
 // POST /approveTransfer
 // Approves a recommended redistribution: persists the dispatch order and moves
 // the stock so the deficit facility is actually replenished (closes the loop).
-app.post("/approveTransfer", async (req, res) => {
+app.post("/approveTransfer", requireOperationsManager, async (req, res) => {
   try {
     const body = req.body || {};
     // Accept both the /recommendation response keys and generic naming.
