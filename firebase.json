@@ -1,4 +1,20 @@
 {
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "*.local",
+      ".env",
+      ".env.*",
+      "keys/**",
+      "**/*.pem",
+      "**/*service-account*.json"
+    ]
+  },
   "hosting": {
     "public": "frontend/dist",
     "ignore": [
@@ -7,6 +23,20 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      {
+        "source": "/api",
+        "function": {
+          "functionId": "api",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/**",
+        "function": {
+          "functionId": "api",
+          "region": "us-central1"
+        }
+      },
       {
         "source": "**",
         "destination": "/index.html"

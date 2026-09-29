@@ -1,9 +1,10 @@
 const express = require("express");
 const cors = require("cors");
+const { onRequest } = require("firebase-functions/v2/https");
 const fs = require("fs");
 const path = require("path");
 try {
-  require("dotenv").config({ path: path.join(__dirname, ".env") });
+  require("dotenv").config({ path: path.join(__dirname, ".env.local") });
 } catch (err) {
   console.warn("dotenv unavailable:", err.message);
 }
@@ -772,6 +773,28 @@ async function askGemini(prompt) {
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
+app.use((req, res, next) => {
+  req.url = req.url.replace(/^\/api(?=\/|\?|$)/, "") || "/";
+  next();
+});
+
+async function requireAssignedUser(req, res, next) {
+  const authorization = String(req.get("authorization") || "");
+  const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!idToken) return res.status(401).json({ error: "Sign in with an assigned role to perform this action." });
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const email = String(decodedToken.email || "").toLowerCase();
+    if (!["ms4055028@gmail.com", "juhi.batra25@gmail.com"].includes(email)) {
+      return res.status(403).json({ error: "Your account does not have an assigned application role." });
+    }
+    req.authUser = decodedToken;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: "Your sign-in could not be verified. Please sign in again." });
+  }
+}
 
 async function requireOperationsManager(req, res, next) {
   const authorization = String(req.get("authorization") || "");
@@ -1496,7 +1519,7 @@ app.post("/approveTransfer", requireOperationsManager, async (req, res) => {
 });
 
 // POST /explainAlert
-app.post("/explainAlert", async (req, res) => {
+app.post("/explainAlert", requireAssignedUser, async (req, res) => {
   try {
     const { alertData, language = "English" } = req.body || {};
 
@@ -1547,13 +1570,69 @@ Return ONLY the JSON object, no markdown fences.`;
   }
 });
 
+app.post("/districtBriefing", requireAssignedUser, async (req, res) => {
+  const summary = req.body?.districtSummary;
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
+    return res.status(400).json({ error: "Missing district summary." });
+  }
+
+  const fallback = {
+    district: String(summary.district || "District"),
+    summary: `${summary.district || "The district"} has ${Number(summary.critical_alerts) || 0} critical and ${Number(summary.warning_alerts) || 0} warning alerts across ${Number(summary.phc_count) || 0} PHCs. Review the listed stock risks and existing recommendations before coordinating action.`,
+    criticalAlerts: Number(summary.critical_alerts) || 0,
+    warningAlerts: Number(summary.warning_alerts) || 0,
+    medicinesAtRisk: Array.isArray(summary.medicines_at_risk) ? summary.medicines_at_risk : [],
+    stockoutRisks: Array.isArray(summary.stockout_risks) ? summary.stockout_risks : [],
+    recommendedActions: Array.isArray(summary.existing_recommendations) ? summary.existing_recommendations : [],
+    dataLimitations: Array.isArray(summary.data_limitations) ? summary.data_limitations : [],
+    source: "fallback"
+  };
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || GEMINI_API_KEY;
+  if (!apiKey) return res.json(fallback);
+
+  try {
+    const prompt = `You are generating an operational district briefing from verified application data. Use only the supplied data. Do not invent PHCs, quantities, stock levels, days remaining, statistics, trends, or actions. If information is unavailable, explicitly state that it is unavailable.\n\nReturn one valid JSON object with these keys: district, summary, criticalAlerts, warningAlerts, medicinesAtRisk, stockoutRisks, recommendedActions, dataLimitations. Keep every number and recommendation grounded in the provided summary. Preserve the supplied counts exactly. recommendedActions are suggestions only, not approved or executed actions.\n\nVerified district data:\n${JSON.stringify(summary)}`;
+    const { text, model } = await askGemini(prompt);
+    const jsonText = text.replace(/```json/g, "").replace(/```/g, "").trim().match(/\{[\s\S]*\}/)?.[0];
+    const briefing = jsonText ? JSON.parse(jsonText) : null;
+    if (!briefing || typeof briefing.summary !== "string") return res.json(fallback);
+    return res.json({
+      ...fallback,
+      ...briefing,
+      district: String(briefing.district || fallback.district),
+      criticalAlerts: fallback.criticalAlerts,
+      warningAlerts: fallback.warningAlerts,
+      source: `Google Gemini (${model})`
+    });
+  } catch (error) {
+    console.warn("District briefing fallback:", error.message);
+    return res.json(fallback);
+  }
+});
+
+app.post("/emergencySummary", requireAssignedUser, async (req, res) => {
+  const data = req.body || {};
+  const fallback = String(data.summaryText || "Emergency scenario summary is unavailable.");
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || GEMINI_API_KEY;
+  if (!apiKey) return res.json({ text: fallback, source: "fallback" });
+
+  try {
+    const prompt = `You are a district health operations assistant for a hackathon prototype dashboard. Use only the verified data below. Do not invent PHCs or counts. Write a short operational summary in plain English with 2-3 sentences. Preserve supplied counts exactly.\n\nData: ${JSON.stringify(data)}`;
+    const { text, model } = await askGemini(prompt);
+    return res.json({ text: text.trim() || fallback, source: `Google Gemini (${model})` });
+  } catch (error) {
+    console.warn("Emergency summary fallback:", error.message);
+    return res.json({ text: fallback, source: "fallback" });
+  }
+});
+
 // POST /translate
 // 4-tier healthcare translation so the endpoint can never fail:
 //   1. curated medical phrase book (offline, instant)
 //   2. Google Cloud Translation API (@google-cloud/translate)
 //   3. Gemini AI
 //   4. passthrough tagged with the target language
-app.post("/translate", async (req, res) => {
+app.post("/translate", requireAssignedUser, async (req, res) => {
   try {
     const { text, targetLanguage = "Hindi", target = "" } = req.body || {};
 
@@ -1651,6 +1730,8 @@ app.get("/", (req, res) => {
       { method: "POST", path: "/recommendation", purpose: "surplus-to-deficit donor matching" },
       { method: "POST", path: "/approveTransfer", purpose: "approve + dispatch redistribution" },
       { method: "POST", path: "/explainAlert", purpose: "Gemini officer briefing" },
+      { method: "POST", path: "/districtBriefing", purpose: "district intelligence briefing" },
+      { method: "POST", path: "/emergencySummary", purpose: "emergency scenario summary" },
       { method: "POST", path: "/translate", purpose: "multilingual PHC messaging" }
     ]
   });
@@ -1669,4 +1750,10 @@ app.use((err, req, res, next) => {
 });
 
 exports.app = app;
+exports.api = onRequest({
+  region: "us-central1",
+  maxInstances: 3,
+  timeoutSeconds: 60,
+  memory: "512MiB"
+}, app);
 

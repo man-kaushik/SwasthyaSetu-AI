@@ -31,7 +31,7 @@ function InventoryDashboard({ onTransferGenerated, permissions, emergencyState =
   const emergencyScenario = getEmergencyScenario(emergencyState?.scenario || "normal");
   const isEmergencyActive = Boolean(emergencyState?.active && emergencyState?.scenario && emergencyState.scenario !== "normal");
   const effectiveDashboard = useMemo(() => isEmergencyActive ? applyEmergencyScenario(dashboard, emergencyState.scenario) : dashboard, [dashboard, emergencyState?.scenario, isEmergencyActive]);
-  const emergencyData = useMemo(() => buildEmergencyDataSummary(effectiveDashboard || dashboard || { inventory: [] }, emergencyState?.scenario || "normal"), [effectiveDashboard, dashboard, emergencyState?.scenario]);
+  const emergencyData = useMemo(() => buildEmergencyDataSummary(dashboard || { inventory: [] }, emergencyState?.scenario || "normal"), [dashboard, emergencyState?.scenario]);
 
   useEffect(() => {
     let active = true;

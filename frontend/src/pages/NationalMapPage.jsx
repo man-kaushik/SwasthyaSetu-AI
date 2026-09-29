@@ -431,7 +431,7 @@ export default function NationalMapPage({ permissions }) {
                     {districtKeys.map((item) => <MenuItem key={item.key} value={item.key}>{item.label}</MenuItem>)}
                   </Select>
                 </FormControl>
-                <Button variant="contained" onClick={handleGenerateBriefing} disabled={briefingLoading || !briefingDistrict || !import.meta.env.VITE_GEMINI_API_KEY}>
+                <Button variant="contained" onClick={handleGenerateBriefing} disabled={briefingLoading || !briefingDistrict}>
                   {briefingLoading ? <><CircularProgress size={18} sx={{ mr: 1, color: "inherit" }} />Generating...</> : "Generate District Briefing"}
                 </Button>
               </Stack>

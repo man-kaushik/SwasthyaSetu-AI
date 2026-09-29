@@ -92,7 +92,7 @@ export function applyEmergencyScenario(dashboard, scenarioKey = 'normal') {
     const baseDemand = Number(row?.forecast_daily_demand ?? row?.predicted_daily_demand ?? row?.daily_consumption ?? 0) || 0;
     const adjustedDemand = calculateAdjustedDemand(baseDemand, impactPercent);
     const currentStock = Number(row?.current_stock ?? 0) || 0;
-    const daysRemaining = adjustedDemand > 0 && currentStock > 0 ? Number((currentStock / adjustedDemand).toFixed(2)) : null;
+    const daysRemaining = adjustedDemand > 0 ? Number((currentStock / adjustedDemand).toFixed(2)) : null;
 
     return {
       ...row,
@@ -174,6 +174,8 @@ export function buildEmergencyTickerText(dashboard, scenarioKey = 'normal') {
     .join(' • ');
 
   const summary = buildEmergencyDataSummary(dashboard || { inventory: [] }, scenarioKey);
-  const hotDistrictCount = summary.stockoutDistricts || 1;
-  return `🚨 EMERGENCY ALERT: ${scenario.label} surge detected — ${impactList} — ${hotDistrictCount} districts at high stock-out risk.`;
+  const riskStatus = summary.stockoutDistricts > 0
+    ? `${summary.stockoutDistricts} districts at high stock-out risk.`
+    : 'Review recalculated stock-out risks in the dashboard.';
+  return `🚨 EMERGENCY ALERT: ${scenario.label} surge detected — ${impactList} — ${riskStatus}`;
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEmergencyScenario } from './emergency.js';
+import { applyEmergencyScenario, buildEmergencyDataSummary, buildEmergencyTickerText } from './emergency.js';
 
 test('dengue emergency raises ORS and paracetamol demand', () => {
   const base = {
@@ -49,4 +49,45 @@ test('normal mode leaves the baseline demand intact', () => {
   const adjusted = applyEmergencyScenario(base, 'normal');
   assert.equal(adjusted.inventory[0].forecast_daily_demand, 16);
   assert.equal(adjusted.summary.emergency_active, false);
+});
+
+test('zero-stock medicines become critical during a matching emergency', () => {
+  const adjusted = applyEmergencyScenario({
+    inventory: [{
+      phc_id: 'PHC-3',
+      medicine_id: 'ORS',
+      district: 'Pune',
+      current_stock: 0,
+      daily_consumption: 10
+    }]
+  }, 'diarrhoea');
+
+  assert.equal(adjusted.inventory[0].days_remaining, 0);
+  assert.equal(adjusted.inventory[0].risk_level, 'CRITICAL');
+  assert.equal(adjusted.summary.critical_alerts, 1);
+});
+
+test('emergency summary uses recalculated risks from baseline demand', () => {
+  const summary = buildEmergencyDataSummary({
+    inventory: [{
+      phc_id: 'PHC-4',
+      medicine_id: 'ORS',
+      medicine_name: 'ORS Packets',
+      district: 'Pune',
+      current_stock: 40,
+      daily_consumption: 10,
+      forecast_daily_demand: 10,
+      days_remaining: 4
+    }]
+  }, 'dengue');
+
+  assert.equal(summary.stockoutDistricts, 1);
+  assert.equal(summary.criticalAlerts, 0);
+  assert.equal(summary.warningAlerts, 1);
+});
+
+test('ticker does not invent a district count without dashboard data', () => {
+  const ticker = buildEmergencyTickerText(null, 'dengue');
+  assert.match(ticker, /Review recalculated stock-out risks/);
+  assert.doesNotMatch(ticker, /1 districts/);
 });

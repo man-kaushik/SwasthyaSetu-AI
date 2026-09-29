@@ -3,9 +3,8 @@ import { collection, doc, getDoc, getDocs, limit, query, setDoc, addDoc, updateD
 import { getRoleForEmail } from "../auth/roles";
 import { buildEmergencyDataSummary, getEmergencyScenario } from "./emergency";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
-const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
 let dashboardRequestSequence = 0;
 
 function requireOperationsManager() {
@@ -250,46 +249,6 @@ async function postBackend(route, payload) {
   return data;
 }
 
-async function requestGeminiInteraction(prompt) {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Gemini is not configured for this app.");
-  let lastError;
-
-  for (const model of GEMINI_MODELS) {
-    try {
-      const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          model,
-          input: prompt,
-          store: false,
-          generation_config: { thinking_level: "low" }
-        })
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.error?.message || `Gemini request failed (HTTP ${response.status}).`);
-
-      const text = data.output_text || (data.steps || data.outputs || [])
-        .filter((step) => step.type === "model_output" || step.type === "text")
-        .flatMap((step) => step.content || [step])
-        .filter((content) => content.type === "text" && content.text)
-        .map((content) => content.text)
-        .join("");
-      if (!text) throw new Error("Gemini returned an empty explanation.");
-      return text;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError || new Error("Gemini request failed.");
-}
-
 export function generateTransferRecommendation({ phc_id, medicine_id }) {
     requireOperationsManager();
   if (APPS_SCRIPT_URL) {
@@ -307,64 +266,7 @@ export function generateTransferRecommendation({ phc_id, medicine_id }) {
 }
 
 export async function explainAlert(alertData, recommendation = null, language = "English") {
-  const directKey = import.meta.env.VITE_GEMINI_API_KEY;
-
-  if (directKey) {
-    const payload = {
-      alert: {
-        phc_id: alertData?.phc_id || alertData?.phc_name || "PHC-UNKNOWN",
-        medicine: alertData?.medicine_name || alertData?.medicine_id || "Medicine",
-        current_stock: Number(alertData?.current_stock ?? alertData?.stock ?? 0),
-        days_remaining: Number(alertData?.forecast_days_remaining ?? alertData?.days_remaining ?? 0),
-        risk_level: String(alertData?.risk_level || alertData?.alert_level || "WARNING").toUpperCase()
-      },
-      recommendation: recommendation || {
-        source_phc_id: "NEARBY-SURPLUS-PHC",
-        quantity: 250,
-        distance_km: 18.4
-      }
-    };
-
-    const prompt = `You are an AI assistant for an Indian district health officer.
-
-Given this PHC medicine stock-out alert and transfer recommendation, generate a concise but practical operational explanation.
-
-Requirements:
-1. Explain the risk in plain, slightly human language.
-2. Mention how the system identifies the problem: low stock, high demand risk, and limited days remaining.
-3. Explain how the transfer plan works: find the nearest surplus PHC/source, compare the transfer distance and quantity, and recommend redistribution.
-4. Give the recommended action.
-5. Give a short message to the destination PHC officer.
-6. Give a short message to the source PHC officer.
-7. Generate the full answer in ${language}.
-
-Keep it brief, clear, and operational, like a field officer briefing.
-
-Data:
-${JSON.stringify(payload, null, 2)}`;
-
-    const text = await requestGeminiInteraction(prompt);
-    const cleaned = String(text).replace(/```json/g, "").replace(/```/g, "").trim();
-
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (parsed && typeof parsed === "object") return parsed;
-    } catch {
-      // Fall through to a readable plain-text object.
-    }
-
-    return {
-      explanation: cleaned || `PHC ${payload.alert.phc_id} is facing a risk of stock-out for ${payload.alert.medicine}.`,
-      recommended_action: "Review the stock shortage and arrange a transfer quickly from the nearest surplus PHC.",
-      destination_phc_message: "Please prepare to receive the transfer supply from the nearest surplus PHC by tomorrow.",
-      source_phc_message: "Please dispatch the required medicine stock to the requesting PHC by tomorrow as approved.",
-      urgency: payload.alert.risk_level || "HIGH"
-    };
-  }
-
-  if (API_BASE_URL) {
-    return postBackend("explainAlert", { alertData, language });
-  }
+  if (API_BASE_URL) return postBackend("explainAlert", { alertData, recommendation, language });
 
   const phcName = alertData?.phc_name || alertData?.phc_id || "PHC";
   const medName = alertData?.medicine_name || alertData?.medicine_id || "medicine";
@@ -380,31 +282,7 @@ ${JSON.stringify(payload, null, 2)}`;
 }
 
 export async function generateDistrictBriefing(districtSummary) {
-  const prompt = `You are generating an operational district briefing from verified application data. Use only the supplied data. Do not invent PHCs, quantities, stock levels, days remaining, statistics, trends, or actions. If information is unavailable, explicitly state that it is unavailable.
-
-Return one valid JSON object with these keys: district, summary, criticalAlerts, warningAlerts, medicinesAtRisk, stockoutRisks, recommendedActions, dataLimitations. Keep every number and recommendation grounded in the provided summary. Preserve the supplied counts exactly. recommendedActions are suggestions only, not approved or executed actions.
-
-Verified district data:
-${JSON.stringify(districtSummary)}`;
-  const responseText = await requestGeminiInteraction(prompt);
-  const cleaned = String(responseText).replace(/```json/g, "").replace(/```/g, "").trim();
-  const jsonText = cleaned.match(/\{[\s\S]*\}/)?.[0];
-  if (!jsonText) throw new Error("Gemini returned a briefing in an unexpected format.");
-
-  const briefing = JSON.parse(jsonText);
-  if (!briefing || typeof briefing !== "object" || Array.isArray(briefing) || typeof briefing.summary !== "string") {
-    throw new Error("Gemini returned an incomplete district briefing.");
-  }
-  return {
-    district: String(briefing.district || districtSummary.district),
-    summary: briefing.summary,
-    criticalAlerts: Number.isFinite(Number(briefing.criticalAlerts)) ? Number(briefing.criticalAlerts) : districtSummary.critical_alerts,
-    warningAlerts: Number.isFinite(Number(briefing.warningAlerts)) ? Number(briefing.warningAlerts) : districtSummary.warning_alerts,
-    medicinesAtRisk: Array.isArray(briefing.medicinesAtRisk) ? briefing.medicinesAtRisk : [],
-    stockoutRisks: Array.isArray(briefing.stockoutRisks) ? briefing.stockoutRisks : [],
-    recommendedActions: Array.isArray(briefing.recommendedActions) ? briefing.recommendedActions : [],
-    dataLimitations: Array.isArray(briefing.dataLimitations) ? briefing.dataLimitations : []
-  };
+  return postBackend("districtBriefing", { districtSummary });
 }
 
 export async function generateEmergencySummary({ dashboard, scenarioKey = "normal" }) {
@@ -412,22 +290,16 @@ export async function generateEmergencySummary({ dashboard, scenarioKey = "norma
   const summary = buildEmergencyDataSummary(dashboard || { inventory: [] }, scenarioKey);
   const deterministic = summary.summaryText || `${scenario.label} emergency mode is active.`;
 
-  if (!import.meta.env.VITE_GEMINI_API_KEY) {
-    return { text: deterministic, source: "fallback" };
-  }
-
   try {
-    const prompt = `You are a district health operations assistant for a hackathon prototype dashboard. Use the verified but lightweight emergency data below. Do not invent PHCs or counts. Write a short operational summary in plain English with 2-3 sentences. Use the supplied counts exactly.\n\nData: ${JSON.stringify({
+    return await postBackend("emergencySummary", {
+      summaryText: deterministic,
       scenario: scenario.label,
       criticalAlerts: summary.criticalAlerts,
       warningAlerts: summary.warningAlerts,
       affectedDistricts: summary.affectedDistricts,
       stockoutDistricts: summary.stockoutDistricts,
       impactList: summary.impactList
-    })}`;
-    const text = await requestGeminiInteraction(prompt);
-    const cleaned = String(text).replace(/```json/g, "").replace(/```/g, "").trim();
-    return { text: cleaned || deterministic, source: "gemini" };
+    });
   } catch (error) {
     console.warn("Gemini emergency summary fallback used:", error.message || String(error));
     return { text: deterministic, source: "fallback" };
