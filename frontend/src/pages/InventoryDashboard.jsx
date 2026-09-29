@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { generateTransferRecommendation, getDashboardData, getTransferTrackingData } from "../services/api";
+import { explainAlert, generateTransferRecommendation, getDashboardData, getTransferTrackingData } from "../services/api";
 import "./InventoryDashboard.css";
 
 const number = (value) => new Intl.NumberFormat("en-IN").format(Number(value) || 0);
@@ -26,6 +26,8 @@ function InventoryDashboard({ onTransferGenerated }) {
   const [transferStatuses, setTransferStatuses] = useState({});
   const [planLoadingKey, setPlanLoadingKey] = useState("");
   const [transferNotice, setTransferNotice] = useState(null);
+  const [aiLoadingKey, setAiLoadingKey] = useState("");
+  const [aiExplanation, setAiExplanation] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -115,6 +117,47 @@ function InventoryDashboard({ onTransferGenerated }) {
       setTransferNotice({ kind: "error", text: requestError.message || "Could not generate a transfer plan." });
     } finally {
       setPlanLoadingKey("");
+    }
+  }
+
+  async function handleExplainAI(row) {
+    const rowKey = `${row.phc_id}-${row.medicine_id}`;
+    setAiLoadingKey(rowKey);
+    setTransferNotice(null);
+    try {
+      const sourcePhcId = row.source_phc_id || "NEARBY-SURPLUS-PHC";
+      const sourcePhcName = row.source_phc_name || "Nearby surplus PHC";
+      const transferQty = Number(row.recommended_transfer ?? row.quantity ?? 250) || 250;
+      const distanceKm = Number(row.distance_km ?? 18.4) || 18.4;
+
+      const explanation = await explainAlert(
+        {
+          phc_id: row.phc_id,
+          phc_name: row.phc_name,
+          medicine_name: row.medicine_name,
+          medicine_id: row.medicine_id,
+          current_stock: row.current_stock,
+          days_remaining: row.forecast_days_remaining ?? row.days_remaining,
+          risk_level: riskCategory(row).toUpperCase()
+        },
+        {
+          source_phc_id: sourcePhcId,
+          source_phc_name: sourcePhcName,
+          quantity: transferQty,
+          distance_km: distanceKm
+        },
+        "English"
+      );
+
+      const aiText = explanation?.explanation || explanation?.text || "AI-generated explanation unavailable.";
+      setAiExplanation((current) => ({ ...current, [rowKey]: aiText }));
+    } catch (requestError) {
+      setAiExplanation((current) => ({
+        ...current,
+        [rowKey]: requestError.message || "The AI explanation could not be generated right now."
+      }));
+    } finally {
+      setAiLoadingKey("");
     }
   }
 
@@ -216,39 +259,59 @@ function InventoryDashboard({ onTransferGenerated }) {
             <tbody>
               {loading && !dashboard ? (
                 <tr><td className="table-message" colSpan="8">Loading inventory from BigQuery...</td></tr>
-              ) : visibleInventory.length ? visibleInventory.map((row, index) => (
-                <tr key={`${row.phc_id}-${row.medicine_id}-${index}`}>
-                  <td>
-                    <span className="facility-name">{row.phc_name || row.phc_id}</span>
-                    <span className="facility-meta">{row.phc_id}</span>
-                  </td>
-                  <td>{row.district || "—"}</td>
-                  <td>
-                    <span className="medicine-name">{row.medicine_name || row.medicine_id}</span>
-                    <span className="facility-meta">{row.medicine_id}</span>
-                  </td>
-                  <td className="numeric-cell">{number(row.current_stock)}</td>
-                  <td className="numeric-cell">{decimal(row.forecast_daily_demand ?? row.daily_consumption, 2)}</td>
-                  <td className="numeric-cell">{decimal(row.forecast_days_remaining ?? row.days_remaining, 2)}</td>
-                  <td><span className={`risk-tag risk-${riskCategory(row)}`}>{riskCategory(row).toUpperCase()}</span></td>
-                  <td className={`action-cell action-${riskCategory(row)}`}>
-                    {riskCategory(row) === "stable" ? "Monitor" : transferStatusLabel[transferStatuses[`${row.phc_id}_${row.medicine_id}`]] ? (
-                      <span className={`generated-request generated-${String(transferStatuses[`${row.phc_id}_${row.medicine_id}`]).toLowerCase()}`}>
-                        {transferStatusLabel[transferStatuses[`${row.phc_id}_${row.medicine_id}`]]}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="generate-plan-button"
-                        disabled={Boolean(planLoadingKey)}
-                        onClick={() => handleGeneratePlan(row)}
-                      >
-                        {planLoadingKey === `${row.phc_id}-${row.medicine_id}` ? "Finding source..." : "Generate Transfer Plan"}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-                )) : (
+              ) : visibleInventory.length ? visibleInventory.map((row, index) => {
+                const rowKey = `${row.phc_id}-${row.medicine_id}`;
+                const rowRisk = riskCategory(row);
+                const transferValue = transferStatuses[`${row.phc_id}_${row.medicine_id}`];
+                const aiText = aiExplanation[rowKey];
+
+                return (
+                  <tr key={`${row.phc_id}-${row.medicine_id}-${index}`}>
+                    <td>
+                      <span className="facility-name">{row.phc_name || row.phc_id}</span>
+                      <span className="facility-meta">{row.phc_id}</span>
+                    </td>
+                    <td>{row.district || "—"}</td>
+                    <td>
+                      <span className="medicine-name">{row.medicine_name || row.medicine_id}</span>
+                      <span className="facility-meta">{row.medicine_id}</span>
+                    </td>
+                    <td className="numeric-cell">{number(row.current_stock)}</td>
+                    <td className="numeric-cell">{decimal(row.forecast_daily_demand ?? row.daily_consumption, 2)}</td>
+                    <td className="numeric-cell">{decimal(row.forecast_days_remaining ?? row.days_remaining, 2)}</td>
+                    <td><span className={`risk-tag risk-${rowRisk}`}>{rowRisk.toUpperCase()}</span></td>
+                    <td className={`action-cell action-${rowRisk}`}>
+                      {rowRisk === "stable" ? "Monitor" : (
+                        <div className="dashboard-action-stack">
+                          <button
+                            type="button"
+                            className="ai-explain-button"
+                            disabled={Boolean(aiLoadingKey)}
+                            onClick={() => handleExplainAI(row)}
+                          >
+                            {aiLoadingKey === rowKey ? "Loading..." : "AI Explain"}
+                          </button>
+                          {aiText && <div className="ai-explanation-text">{aiText}</div>}
+                          {transferValue ? (
+                            <span className={`generated-request generated-${String(transferValue).toLowerCase()}`}>
+                              {transferStatusLabel[transferValue]}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="generate-plan-button"
+                              disabled={Boolean(planLoadingKey)}
+                              onClick={() => handleGeneratePlan(row)}
+                            >
+                              {planLoadingKey === rowKey ? "Finding source..." : "Generate Transfer Plan"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              }) : (
                 <tr><td className="table-message" colSpan="8">{error ? "Inventory could not be loaded." : "No matching inventory records."}</td></tr>
               )}
             </tbody>

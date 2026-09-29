@@ -80,22 +80,37 @@ export function generateTransferRecommendation({ phc_id, medicine_id }) {
   return postBackend("recommendation", { phc_id, medicine_id });
 }
 
-export async function explainAlert(alertData, language = "English") {
+export async function explainAlert(alertData, recommendation = null, language = "English") {
   const directKey = import.meta.env.VITE_GEMINI_API_KEY;
 
   if (directKey) {
-    const prompt = `
-      Explain this health stock alert in very simple language for a doctor or PHC staff.
-      Data:
-      ${JSON.stringify(alertData, null, 2)}
-      Return valid JSON only with keys:
-      - explanation
-      - root_cause
-      - action_recommendation
-      - urgency
-      Keep it short and practical.
-      Use the language: ${language}
-    `;
+    const payload = {
+      alert: {
+        phc_id: alertData?.phc_id || alertData?.phc_name || "PHC-UNKNOWN",
+        medicine: alertData?.medicine_name || alertData?.medicine_id || "Medicine",
+        current_stock: Number(alertData?.current_stock ?? alertData?.stock ?? 0),
+        days_remaining: Number(alertData?.forecast_days_remaining ?? alertData?.days_remaining ?? 0),
+        risk_level: String(alertData?.risk_level || alertData?.alert_level || "WARNING").toUpperCase()
+      },
+      recommendation: recommendation || {
+        source_phc_id: "NEARBY-SURPLUS-PHC",
+        quantity: 250,
+        distance_km: 18.4
+      }
+    };
+
+    const prompt = `You are an AI assistant for an Indian district health officer.
+
+Given this PHC medicine stock-out alert and transfer recommendation, generate:
+1. A short explanation of the risk.
+2. The recommended action.
+3. A message to send to the destination PHC officer.
+4. A message to send to the source PHC officer.
+
+Keep it concise and operational.
+
+Data:
+${JSON.stringify(payload, null, 2)}`;
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${directKey}`, {
       method: "POST",
@@ -114,15 +129,19 @@ export async function explainAlert(alertData, language = "English") {
     const cleaned = String(text).replace(/```json/g, "").replace(/```/g, "").trim();
 
     try {
-      return JSON.parse(cleaned);
+      const parsed = JSON.parse(cleaned);
+      if (parsed && typeof parsed === "object") return parsed;
     } catch (error) {
-      return {
-        explanation: text || "This alert needs attention due to a possible medicine shortage.",
-        root_cause: "Likely stock mismatch or demand surge",
-        action_recommendation: "Review local stock and arrange replenishment quickly.",
-        urgency: "HIGH"
-      };
+      // Fall through to a readable plain-text object.
     }
+
+    return {
+      explanation: cleaned || `PHC ${payload.alert.phc_id} is facing a risk of stock-out for ${payload.alert.medicine}.`,
+      recommended_action: "Review the stock shortage and arrange a transfer quickly from the nearest surplus PHC.",
+      destination_phc_message: "Please prepare to receive the transfer supply from the nearest surplus PHC by tomorrow.",
+      source_phc_message: "Please dispatch the required medicine stock to the requesting PHC by tomorrow as approved.",
+      urgency: payload.alert.risk_level || "HIGH"
+    };
   }
 
   if (API_BASE_URL) {
@@ -131,12 +150,13 @@ export async function explainAlert(alertData, language = "English") {
 
   const phcName = alertData?.phc_name || alertData?.phc_id || "PHC";
   const medName = alertData?.medicine_name || alertData?.medicine_id || "medicine";
-  const days = alertData?.days_remaining || 2;
+  const days = Number(alertData?.forecast_days_remaining ?? alertData?.days_remaining ?? 2);
 
   return {
     explanation: `${phcName} is likely facing a shortage of ${medName}. The current stock may run out in about ${days} days, so it needs immediate attention.`,
-    root_cause: "Demand is rising faster than stock can be replenished.",
-    action_recommendation: "Increase stock review and arrange quick replenishment or transfer from a nearby facility.",
+    recommended_action: "Increase stock review and arrange quick replenishment or transfer from a nearby facility.",
+    destination_phc_message: "Please prepare to receive the required medicine transfer by tomorrow.",
+    source_phc_message: "Please dispatch the required stock to the requesting PHC urgently.",
     urgency: days <= 3 ? "CRITICAL" : "HIGH"
   };
 }

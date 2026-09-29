@@ -82,6 +82,11 @@
 .generated-completed,
 .generated-delivered { border-color: #cce2d1; background: #edf7ef; color: #33744d; }
 .generated-rejected { border-color: #e1d8d5; background: #f4f0ef; color: #80665e; }
+.dashboard-action-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+.ai-explain-button { min-height: 28px; padding: 0 8px; border: 1px solid #2d6b59; border-radius: 4px; background: #edf6ef; color: #1d5b49; font-size: 9px; font-weight: 800; cursor: pointer; }
+.ai-explain-button:hover:not(:disabled) { background: #dfeee5; }
+.ai-explain-button:disabled { cursor: wait; opacity: 0.7; }
+.ai-explanation-text { max-width: 260px; color: #355f59; font-size: 10px; line-height: 1.45; white-space: normal; }
 .generate-plan-button { min-height: 30px; padding: 0 9px; border: 1px solid #9b6b1b; border-radius: 4px; background: #fff8e9; color: #80550d; font-size: 10px; font-weight: 750; white-space: nowrap; cursor: pointer; }
 .generate-plan-button:hover:not(:disabled) { background: #fff0cf; }
 .generate-plan-button:disabled { cursor: wait; opacity: 0.65; }
