@@ -92,6 +92,7 @@ function AlertsPage({ onTransferGenerated }) {
 
     setExplanationLoadingKey(key);
     try {
+      const languageName = selectedLanguage === "hi" ? "Hindi" : selectedLanguage === "ta" ? "Tamil" : "English";
       const response = await explainAlert(
         row,
         {
@@ -99,7 +100,7 @@ function AlertsPage({ onTransferGenerated }) {
           quantity: 250,
           distance_km: 18.4
         },
-        "English"
+        languageName
       );
 
       const rawText = response?.explanation || response?.text || response?.phc_sms_message || "No clear explanation is available for this alert right now.";

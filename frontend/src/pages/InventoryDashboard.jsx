@@ -147,6 +147,7 @@ function InventoryDashboard({ onTransferGenerated }) {
       const sourcePhcName = row.source_phc_name || "Nearby surplus PHC";
       const transferQty = Number(row.recommended_transfer ?? row.quantity ?? 250) || 250;
       const distanceKm = Number(row.distance_km ?? 18.4) || 18.4;
+      const languageName = selectedLanguage === "hi" ? "Hindi" : selectedLanguage === "ta" ? "Tamil" : "English";
 
       const explanation = await explainAlert(
         {
@@ -164,7 +165,7 @@ function InventoryDashboard({ onTransferGenerated }) {
           quantity: transferQty,
           distance_km: distanceKm
         },
-        "English"
+        languageName
       );
 
       const rawText = explanation?.explanation || explanation?.text || "AI-generated explanation unavailable.";
