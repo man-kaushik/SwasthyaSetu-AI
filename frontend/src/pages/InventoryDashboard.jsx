@@ -1,19 +1,12 @@
 import { useEffect, useState } from "react";
 import { explainAlert, generateTransferRecommendation, getDashboardData, getTransferTrackingData } from "../services/api";
+import { riskCategory } from "../utils/risk";
 import "./InventoryDashboard.css";
 
 const number = (value) => new Intl.NumberFormat("en-IN").format(Number(value) || 0);
 const decimal = (value, digits = 1) => value == null || !Number.isFinite(Number(value))
   ? "—"
   : new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(Number(value));
-
-function riskCategory(row) {
-  const risk = String(row.risk_level || "").toUpperCase();
-  const daysRemaining = Number(row.forecast_days_remaining ?? row.days_remaining);
-  if (["CRITICAL", "STOCKED_OUT"].includes(risk) || daysRemaining <= 3) return "critical";
-  if (["WARNING", "HIGH"].includes(risk) || daysRemaining <= 7) return "warning";
-  return "stable";
-}
 
 function InventoryDashboard({ onTransferGenerated }) {
   const [dashboard, setDashboard] = useState(null);

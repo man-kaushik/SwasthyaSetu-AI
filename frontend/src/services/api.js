@@ -1,5 +1,5 @@
 import { db } from "../firebase";
-import { collection, doc, getDocs, limit, query, setDoc, addDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, query, setDoc, addDoc, writeBatch } from "firebase/firestore";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
@@ -43,15 +43,170 @@ function requestAppsScript(route, parameters = {}) {
 }
 
 export async function getDashboardData() {
-  if (APPS_SCRIPT_URL) return requestAppsScript("");
-
-  if (API_BASE_URL) {
+  let dashboard;
+  if (APPS_SCRIPT_URL) {
+    dashboard = await requestAppsScript("");
+  } else if (API_BASE_URL) {
     const response = await fetch(`${API_BASE_URL}/dashboard`);
     if (!response.ok) throw new Error(`Dashboard request failed (HTTP ${response.status})`);
-    return response.json();
+    dashboard = await response.json();
+  } else {
+    throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
   }
 
-  throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
+  return mergeFirestoreOperationalData(dashboard);
+}
+
+async function mergeFirestoreOperationalData(dashboard) {
+  try {
+    const [phcSnapshot, medicineSnapshot, inventorySnapshot] = await Promise.all([
+      getDocs(collection(db, "phcs")),
+      getDocs(collection(db, "medicines")),
+      getDocs(collection(db, "current_inventory"))
+    ]);
+    const phcs = new Map((dashboard.phcs || []).map((phc) => [phc.phc_id, phc]));
+    (dashboard.inventory || []).forEach((row) => {
+      if (row.phc_id && !phcs.has(row.phc_id)) phcs.set(row.phc_id, {
+        phc_id: row.phc_id,
+        name: row.phc_name,
+        district: row.district,
+        state: row.state,
+        lat: row.lat,
+        lng: row.lng
+      });
+    });
+    const medicines = new Map(medicineSnapshot.docs.map((snapshot) => {
+      const medicine = snapshot.data();
+      return [medicine.medicine_id || snapshot.id, medicine];
+    }));
+    const inventory = new Map((dashboard.inventory || []).map((row) => [`${row.phc_id}_${row.medicine_id}`, row]));
+
+    phcSnapshot.docs.forEach((snapshot) => {
+      const phc = snapshot.data();
+      const phcId = phc.phc_id || snapshot.id;
+      phcs.set(phcId, { ...(phcs.get(phcId) || {}), ...phc, phc_id: phcId });
+    });
+
+    inventorySnapshot.docs.forEach((snapshot) => {
+      const record = snapshot.data();
+      if (!record.phc_id || !record.medicine_id) return;
+      const key = `${record.phc_id}_${record.medicine_id}`;
+      const previous = inventory.get(key) || {};
+      const phc = phcs.get(record.phc_id) || {};
+      const medicine = medicines.get(record.medicine_id) || {};
+      const merged = {
+        ...previous,
+        ...record,
+        phc_name: record.phc_name || phc.name || previous.phc_name || record.phc_id,
+        district: record.district || phc.district || previous.district,
+        state: record.state || phc.state || previous.state,
+        lat: record.lat ?? phc.lat ?? previous.lat,
+        lng: record.lng ?? phc.lng ?? previous.lng,
+        medicine_name: record.medicine_name || medicine.medicine_name || previous.medicine_name || record.medicine_id,
+        unit: record.unit || medicine.unit || previous.unit
+      };
+      const dailyDemand = Number(record.predicted_daily_demand ?? record.daily_consumption ?? previous.predicted_daily_demand ?? previous.daily_consumption) || 0;
+      const stock = Number(merged.current_stock) || 0;
+      merged.predicted_daily_demand = dailyDemand;
+      merged.days_remaining = dailyDemand > 0 ? Math.round(stock / dailyDemand * 100) / 100 : null;
+      merged.risk_level = merged.days_remaining === null || merged.days_remaining > 7
+        ? "STABLE"
+        : merged.days_remaining <= 3 ? "CRITICAL" : "WARNING";
+      inventory.set(key, merged);
+    });
+
+    const inventoryRows = [...inventory.values()];
+    const uniquePhcs = new Set(inventoryRows.map((row) => row.phc_id));
+    return {
+      ...dashboard,
+      inventory: inventoryRows,
+      phcs: [...phcs.values()],
+      summary: {
+        ...dashboard.summary,
+        total_phcs_monitored: uniquePhcs.size,
+        total_medicine_records: inventoryRows.length
+      }
+    };
+  } catch (error) {
+    console.warn("Firestore operational records could not be merged into the dashboard:", error.message || String(error));
+    return dashboard;
+  }
+}
+
+export async function saveDistrictSupplies({ districtName, state, districtCode, phc, supplies, existingPhcIds = [] }) {
+  const cleanDistrict = String(districtName || "").trim();
+  const cleanState = String(state || "").trim();
+  const cleanPhcId = String(phc?.phc_id || "").trim();
+  const cleanPhcName = String(phc?.name || "").trim();
+  if (!cleanDistrict || !cleanState || !cleanPhcId || !cleanPhcName || !Array.isArray(supplies) || !supplies.length) {
+    throw new Error("Complete district, state, PHC, and at least one supply.");
+  }
+  if (supplies.length > 100) throw new Error("Add no more than 100 supply rows at a time.");
+  if (existingPhcIds.includes(cleanPhcId)) throw new Error("That PHC ID already exists in the current dashboard data.");
+
+  const phcRef = doc(db, "phcs", cleanPhcId);
+  if ((await getDoc(phcRef)).exists()) throw new Error("That PHC ID already exists in Firestore.");
+
+  const timestamp = new Date().toISOString();
+  const districtId = `${cleanState}-${cleanDistrict}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const districtRecord = {
+    district_id: districtId,
+    district_code: String(districtCode || "").trim() || districtId.toUpperCase(),
+    district_name: cleanDistrict,
+    state: cleanState,
+    created_at: timestamp
+  };
+  const phcRecord = {
+    ...phc,
+    phc_id: cleanPhcId,
+    name: cleanPhcName,
+    district: cleanDistrict,
+    state: cleanState,
+    created_at: timestamp
+  };
+  const batch = writeBatch(db);
+  batch.set(doc(db, "districts", districtId), districtRecord, { merge: true });
+  batch.set(phcRef, phcRecord);
+
+  supplies.forEach((supply) => {
+    const medicineId = String(supply.medicine_id || "").trim().toUpperCase();
+    const medicineName = String(supply.medicine_name || "").trim();
+    const stock = Number(supply.current_stock);
+    const dailyDemand = Number(supply.daily_consumption);
+    if (!medicineId || !medicineName || !Number.isFinite(stock) || stock < 0 || !Number.isFinite(dailyDemand) || dailyDemand < 0) {
+      throw new Error("Each supply needs a medicine, non-negative stock, and non-negative daily use.");
+    }
+
+    const medicineRecord = {
+      medicine_id: medicineId,
+      medicine_name: medicineName,
+      unit: String(supply.unit || "Units").trim(),
+      category: String(supply.category || "Other").trim(),
+      safety_stock: Math.max(0, Number(supply.safety_stock) || 0),
+      standard_daily_consumption: dailyDemand,
+      updated_at: timestamp
+    };
+    const inventoryRecord = {
+      phc_id: cleanPhcId,
+      phc_name: cleanPhcName,
+      district: cleanDistrict,
+      state: cleanState,
+      medicine_id: medicineId,
+      medicine_name: medicineName,
+      unit: medicineRecord.unit,
+      current_stock: stock,
+      daily_consumption: dailyDemand,
+      updated_at: timestamp,
+      timestamp
+    };
+    const inventoryId = `${cleanPhcId}_${medicineId}`;
+    batch.set(doc(db, "medicines", medicineId), medicineRecord, { merge: true });
+    batch.set(doc(db, "current_inventory", inventoryId), inventoryRecord);
+    batch.set(doc(collection(db, "inventory_history")), inventoryRecord);
+  });
+
+  await batch.commit();
+  return { district: districtRecord, phc: phcRecord, supply_count: supplies.length };
 }
 
 async function postBackend(route, payload) {
@@ -68,6 +223,7 @@ async function postBackend(route, payload) {
 
 async function requestGeminiInteraction(prompt) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini is not configured for this app.");
   let lastError;
 
   for (const model of GEMINI_MODELS) {
@@ -163,7 +319,7 @@ ${JSON.stringify(payload, null, 2)}`;
     try {
       const parsed = JSON.parse(cleaned);
       if (parsed && typeof parsed === "object") return parsed;
-    } catch (error) {
+    } catch {
       // Fall through to a readable plain-text object.
     }
 
@@ -190,6 +346,34 @@ ${JSON.stringify(payload, null, 2)}`;
     destination_phc_message: "Please prepare to receive the required medicine transfer by tomorrow.",
     source_phc_message: "Please dispatch the required stock to the requesting PHC urgently.",
     urgency: days <= 3 ? "CRITICAL" : "HIGH"
+  };
+}
+
+export async function generateDistrictBriefing(districtSummary) {
+  const prompt = `You are generating an operational district briefing from verified application data. Use only the supplied data. Do not invent PHCs, quantities, stock levels, days remaining, statistics, trends, or actions. If information is unavailable, explicitly state that it is unavailable.
+
+Return one valid JSON object with these keys: district, summary, criticalAlerts, warningAlerts, medicinesAtRisk, stockoutRisks, recommendedActions, dataLimitations. Keep every number and recommendation grounded in the provided summary. Preserve the supplied counts exactly. recommendedActions are suggestions only, not approved or executed actions.
+
+Verified district data:
+${JSON.stringify(districtSummary)}`;
+  const responseText = await requestGeminiInteraction(prompt);
+  const cleaned = String(responseText).replace(/```json/g, "").replace(/```/g, "").trim();
+  const jsonText = cleaned.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonText) throw new Error("Gemini returned a briefing in an unexpected format.");
+
+  const briefing = JSON.parse(jsonText);
+  if (!briefing || typeof briefing !== "object" || Array.isArray(briefing) || typeof briefing.summary !== "string") {
+    throw new Error("Gemini returned an incomplete district briefing.");
+  }
+  return {
+    district: String(briefing.district || districtSummary.district),
+    summary: briefing.summary,
+    criticalAlerts: Number.isFinite(Number(briefing.criticalAlerts)) ? Number(briefing.criticalAlerts) : districtSummary.critical_alerts,
+    warningAlerts: Number.isFinite(Number(briefing.warningAlerts)) ? Number(briefing.warningAlerts) : districtSummary.warning_alerts,
+    medicinesAtRisk: Array.isArray(briefing.medicinesAtRisk) ? briefing.medicinesAtRisk : [],
+    stockoutRisks: Array.isArray(briefing.stockoutRisks) ? briefing.stockoutRisks : [],
+    recommendedActions: Array.isArray(briefing.recommendedActions) ? briefing.recommendedActions : [],
+    dataLimitations: Array.isArray(briefing.dataLimitations) ? briefing.dataLimitations : []
   };
 }
 
