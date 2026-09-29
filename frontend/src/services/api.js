@@ -3,6 +3,7 @@ import { collection, doc, getDocs, limit, query, setDoc, addDoc, writeBatch } fr
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
+const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
 let dashboardRequestSequence = 0;
 
 function requestAppsScript(route, parameters = {}) {
@@ -65,6 +66,45 @@ async function postBackend(route, payload) {
   return data;
 }
 
+async function requestGeminiInteraction(prompt) {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  let lastError;
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey
+        },
+        body: JSON.stringify({
+          model,
+          input: prompt,
+          store: false,
+          generation_config: { thinking_level: "low" }
+        })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error?.message || `Gemini request failed (HTTP ${response.status}).`);
+
+      const text = data.output_text || (data.steps || data.outputs || [])
+        .filter((step) => step.type === "model_output" || step.type === "text")
+        .flatMap((step) => step.content || [step])
+        .filter((content) => content.type === "text" && content.text)
+        .map((content) => content.text)
+        .join("");
+      if (!text) throw new Error("Gemini returned an empty explanation.");
+      return text;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Gemini request failed.");
+}
+
 export function generateTransferRecommendation({ phc_id, medicine_id }) {
   if (APPS_SCRIPT_URL) {
     return requestAppsScript("recommendation", { phc_id, medicine_id }).then(async (plan) => {
@@ -117,20 +157,7 @@ Keep it brief, clear, and operational, like a field officer briefing.
 Data:
 ${JSON.stringify(payload, null, 2)}`;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${directKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
-      })
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.error?.message || "Gemini request failed from the browser.");
-    }
-
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const text = await requestGeminiInteraction(prompt);
     const cleaned = String(text).replace(/```json/g, "").replace(/```/g, "").trim();
 
     try {

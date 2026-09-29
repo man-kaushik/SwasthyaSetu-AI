@@ -8,7 +8,6 @@ try {
   console.warn("dotenv unavailable:", err.message);
 }
 const admin = require("firebase-admin");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { BigQuery } = require("@google-cloud/bigquery");
 const { Translate } = require("@google-cloud/translate").v2;
 const { PHC_DIRECTORY, ESSENTIAL_MEDICINES } = require("./data");
@@ -46,7 +45,6 @@ if (runningOnCloud || firestoreExplicitCreds) {
 // Configuration (all optional - every integration degrades gracefully):
 //   GEMINI_API_KEY / GOOGLE_API_KEY : enables POST /explainAlert + AI translate
 //   GOOGLE_CLOUD_PROJECT / BQ_DATASET : enables BigQuery-powered risk enrichment
-//   GEMINI_MODEL : override the default Gemini model id
 // ---------------------------------------------------------------------------
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
 const BQ_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "";
@@ -54,13 +52,7 @@ const BQ_DATASET = process.env.BQ_DATASET || "swasthya_ai";
 const BQ_LOCATION = process.env.BQ_LOCATION || "US";
 const BIGQUERY_TIMEOUT_MS = Number(process.env.BIGQUERY_TIMEOUT_MS) || 12000;
 
-// "gemini-1.5-flash" was retired; try current GA model ids in order of preference.
-const GEMINI_MODELS = [
-  process.env.GEMINI_MODEL,
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-flash-latest"
-].filter(Boolean);
+const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
 
 let bigQueryClient = null;
 let translateClient = null;
@@ -742,13 +734,33 @@ async function askGemini(prompt) {
   if (!GEMINI_API_KEY) {
     throw new Error("No Gemini API key configured (set GEMINI_API_KEY)");
   }
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
   let lastError = null;
   for (const modelName of GEMINI_MODELS) {
     try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent(prompt);
-      return { text: result.response.text(), model: modelName };
+      const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": GEMINI_API_KEY
+        },
+        body: JSON.stringify({
+          model: modelName,
+          input: prompt,
+          store: false,
+          generation_config: { thinking_level: "low" }
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error?.message || `Gemini request failed (HTTP ${response.status}).`);
+
+      const text = data.output_text || (data.steps || data.outputs || [])
+        .filter((step) => step.type === "model_output" || step.type === "text")
+        .flatMap((step) => step.content || [step])
+        .filter((content) => content.type === "text" && content.text)
+        .map((content) => content.text)
+        .join("");
+      if (!text) throw new Error("Gemini returned an empty response.");
+      return { text, model: modelName };
     } catch (err) {
       lastError = err;
       console.warn(`Gemini model ${modelName} unavailable:`, err.message);
