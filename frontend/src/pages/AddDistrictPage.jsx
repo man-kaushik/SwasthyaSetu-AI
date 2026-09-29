@@ -42,14 +42,10 @@ export default function AddDistrictPage({ user }) {
     if (!/^[A-Za-z0-9_-]+$/.test(phc.phc_id.trim())) return "PHC ID may contain letters, numbers, hyphens, and underscores only.";
     if (existingPhcIds.includes(phc.phc_id.trim())) return "That PHC ID already exists in the current application data.";
     if (phc.population_served !== "" && (!Number.isInteger(Number(phc.population_served)) || Number(phc.population_served) < 0)) return "Population served must be a non-negative whole number.";
-    const hasLat = phc.lat !== "";
-    const hasLng = phc.lng !== "";
-    if (hasLat !== hasLng) return "Enter both coordinates or leave both empty.";
-    if (hasLat) {
-      const lat = Number(phc.lat);
-      const lng = Number(phc.lng);
-      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) return "Enter valid latitude and longitude values.";
-    }
+    if (phc.lat === "" || phc.lng === "") return "Latitude and longitude are required so this PHC can appear on the national map.";
+    const lat = Number(phc.lat);
+    const lng = Number(phc.lng);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) return "Enter valid latitude and longitude values.";
     if (!supplies.length) return "Add at least one supply record.";
     const medicineIds = supplies.map((supply) => supply.medicine_id.trim().toUpperCase());
     if (supplies.some((supply) => !supply.medicine_id.trim() || !supply.medicine_name.trim() || supply.current_stock === "" || supply.daily_consumption === "")) return "Each supply needs a medicine ID, name, stock, and daily use.";
@@ -76,7 +72,8 @@ export default function AddDistrictPage({ user }) {
       const cleanPhc = {
         phc_id: phc.phc_id.trim(),
         name: phc.name.trim(),
-        ...(phc.lat !== "" ? { lat: Number(phc.lat), lng: Number(phc.lng) } : {}),
+        lat: Number(phc.lat),
+        lng: Number(phc.lng),
         ...(phc.population_served !== "" ? { population_served: Number(phc.population_served) } : {})
       };
       const cleanSupplies = supplies.map((supply) => ({
@@ -127,8 +124,8 @@ export default function AddDistrictPage({ user }) {
               <Grid size={{ xs: 12, sm: 3 }}><TextField label="District code (optional)" value={districtCode} onChange={(event) => setDistrictCode(event.target.value)} fullWidth size="small" /></Grid>
               <Grid size={{ xs: 12, sm: 4 }}><TextField label="PHC ID" value={phc.phc_id} onChange={(event) => setPhc((current) => ({ ...current, phc_id: event.target.value }))} required fullWidth size="small" /></Grid>
               <Grid size={{ xs: 12, sm: 8 }}><TextField label="PHC name" value={phc.name} onChange={(event) => setPhc((current) => ({ ...current, name: event.target.value }))} required fullWidth size="small" /></Grid>
-              <Grid size={{ xs: 12, sm: 3 }}><TextField label="Latitude (optional)" type="number" inputProps={{ min: -90, max: 90, step: "any" }} value={phc.lat} onChange={(event) => setPhc((current) => ({ ...current, lat: event.target.value }))} fullWidth size="small" /></Grid>
-              <Grid size={{ xs: 12, sm: 3 }}><TextField label="Longitude (optional)" type="number" inputProps={{ min: -180, max: 180, step: "any" }} value={phc.lng} onChange={(event) => setPhc((current) => ({ ...current, lng: event.target.value }))} fullWidth size="small" /></Grid>
+              <Grid size={{ xs: 12, sm: 3 }}><TextField label="Latitude" type="number" inputProps={{ min: -90, max: 90, step: "any" }} value={phc.lat} onChange={(event) => setPhc((current) => ({ ...current, lat: event.target.value }))} required fullWidth size="small" /></Grid>
+              <Grid size={{ xs: 12, sm: 3 }}><TextField label="Longitude" type="number" inputProps={{ min: -180, max: 180, step: "any" }} value={phc.lng} onChange={(event) => setPhc((current) => ({ ...current, lng: event.target.value }))} required fullWidth size="small" /></Grid>
               <Grid size={{ xs: 12, sm: 6 }}><TextField label="Population served (optional)" type="number" inputProps={{ min: 0, step: 1 }} value={phc.population_served} onChange={(event) => setPhc((current) => ({ ...current, population_served: event.target.value }))} fullWidth size="small" /></Grid>
             </Grid>
           </Paper>

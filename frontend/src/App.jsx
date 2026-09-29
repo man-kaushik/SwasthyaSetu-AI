@@ -49,6 +49,7 @@ function App() {
   const [profile, setProfile] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [signInPending, setSignInPending] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
   const [authError, setAuthError] = useState('');
   const permissions = getRolePermissions(profile?.role);
 
@@ -57,6 +58,7 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!active) return;
       setUser(firebaseUser);
+      setProfile(null);
       setAuthError('');
       setAuthLoading(true);
       if (!firebaseUser) {
@@ -111,8 +113,17 @@ function App() {
 
   async function handleSignOut() {
     setAuthError('');
-    await signOut(auth);
-    setCurrentView('home');
+    setSignOutPending(true);
+    try {
+      await signOut(auth);
+      setUser(null);
+      setProfile(null);
+      setCurrentView('home');
+    } catch (error) {
+      setAuthError(error.message || 'Could not sign out. Please try again.');
+    } finally {
+      setSignOutPending(false);
+    }
   }
 
   if (authLoading || (user && !profile && !authError)) {
@@ -200,8 +211,8 @@ function App() {
                 <Typography noWrap sx={{ color: 'white', fontSize: 11, fontWeight: 750 }}>{ROLE_LABELS[profile.role]}</Typography>
                 <Typography noWrap sx={{ color: 'rgba(255,255,255,.76)', fontSize: 9 }}>{ROLE_DESCRIPTIONS[profile.role]}</Typography>
               </Box>
-              <Button onClick={handleSignOut} sx={{ flex: '0 0 auto', color: 'white', fontWeight: 700, minWidth: 74, px: 1 }}>
-                Sign out
+              <Button onClick={handleSignOut} disabled={signOutPending} sx={{ flex: '0 0 auto', color: 'white', fontWeight: 700, minWidth: 74, px: 1 }}>
+                {signOutPending ? <CircularProgress size={15} sx={{ color: 'inherit' }} /> : 'Sign out'}
               </Button>
             </Stack>
           </Toolbar>
@@ -209,7 +220,7 @@ function App() {
 
           {authError && <Alert severity="error" onClose={() => setAuthError('')}>{authError}</Alert>}
           {currentView === 'map'
-              ? <NationalMapPage />
+            ? <NationalMapPage permissions={permissions} />
               : currentView === 'add-district'
                 ? permissions.canManageDistricts ? <AddDistrictPage user={profile} /> : <InventoryDashboard permissions={permissions} currentUser={profile} />
                 : currentView === 'alerts'

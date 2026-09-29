@@ -217,6 +217,22 @@ export async function saveDistrictSupplies({ districtName, state, districtCode, 
   return { district: districtRecord, phc: phcRecord, supply_count: supplies.length };
 }
 
+export async function updatePhcCoordinates(phcId, latitude, longitude) {
+  requireOperationsManager();
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!phcId || !Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) {
+    throw new Error("Enter valid latitude and longitude coordinates for this PHC.");
+  }
+  await setDoc(doc(db, "phcs", phcId), {
+    phc_id: phcId,
+    lat,
+    lng,
+    updated_at: new Date().toISOString()
+  }, { merge: true });
+  return { phc_id: phcId, lat, lng };
+}
+
 async function postBackend(route, payload) {
   if (!API_BASE_URL) throw new Error("Set VITE_API_BASE_URL to use transfer recommendations.");
   const idToken = await auth.currentUser?.getIdToken();
@@ -595,17 +611,29 @@ export async function approveTransferPlan(plan) {
 }
 
 export async function getAlertsData() {
+  let inventoryRows;
   if (APPS_SCRIPT_URL) {
     const response = await requestAppsScript("alerts");
-    if (Array.isArray(response)) return response;
-    if (!Array.isArray(response?.inventory)) throw new Error("The alerts route returned an unexpected response.");
+    if (Array.isArray(response)) inventoryRows = response;
+    else if (Array.isArray(response?.inventory)) inventoryRows = response.inventory;
+    else throw new Error("The alerts route returned an unexpected response.");
+  } else if (API_BASE_URL) {
+    const response = await fetch(`${API_BASE_URL}/alerts`);
+    if (!response.ok) throw new Error(`Alerts request failed (HTTP ${response.status})`);
+    const data = await response.json();
+    inventoryRows = Array.isArray(data) ? data : data.alerts || [];
+  } else {
+    throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
+  }
 
-    const riskOrder = { CRITICAL: 0, WARNING: 1, STABLE: 2 };
-    return response.inventory.map((row) => {
+  const dashboard = await mergeFirestoreOperationalData({ inventory: inventoryRows, summary: {} });
+  const riskOrder = { CRITICAL: 0, WARNING: 1, STABLE: 2 };
+    return dashboard.inventory.map((row) => {
       const predictedDemand = Number(row.predicted_daily_demand ?? row.forecast_daily_demand ?? row.daily_consumption) || 0;
-      const daysRemaining = predictedDemand > 0
-        ? Math.round((Number(row.current_stock || 0) / predictedDemand) * 100) / 100
-        : null;
+      const daysRemaining = row.days_remaining == null
+        ? predictedDemand > 0 ? Math.round((Number(row.current_stock || 0) / predictedDemand) * 100) / 100 : null
+        : Number(row.days_remaining);
+      const risk = String(row.risk_level || (daysRemaining === null || daysRemaining > 7 ? "STABLE" : daysRemaining <= 3 ? "CRITICAL" : "WARNING")).toUpperCase();
       return {
         phc_id: row.phc_id,
         phc_name: row.phc_name,
@@ -616,18 +644,11 @@ export async function getAlertsData() {
         current_stock: Number(row.current_stock) || 0,
         predicted_daily_demand: predictedDemand,
         days_remaining: daysRemaining,
-        risk_level: daysRemaining === null || daysRemaining > 7 ? "STABLE" : daysRemaining <= 3 ? "CRITICAL" : "WARNING"
+        risk_level: risk,
+        unit: row.unit,
+        lat: row.lat,
+        lng: row.lng
       };
     }).sort((left, right) => riskOrder[left.risk_level] - riskOrder[right.risk_level]);
-  }
-
-  if (API_BASE_URL) {
-    const response = await fetch(`${API_BASE_URL}/alerts`);
-    if (!response.ok) throw new Error(`Alerts request failed (HTTP ${response.status})`);
-    const data = await response.json();
-    return Array.isArray(data) ? data : data.alerts || [];
-  }
-
-  throw new Error("Set VITE_APPS_SCRIPT_URL to the deployed Apps Script web app.");
 }
 

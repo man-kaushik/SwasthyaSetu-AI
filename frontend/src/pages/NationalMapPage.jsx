@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Alert, Box, Button, Chip, CircularProgress, FormControl, Grid, InputLabel,
-  MenuItem, Paper, Select, Stack, Typography
+  MenuItem, Paper, Select, Stack, TextField, Typography
 } from "@mui/material";
-import { generateDistrictBriefing, getDashboardData, getTransferTrackingData } from "../services/api";
+import { generateDistrictBriefing, getDashboardData, getTransferTrackingData, updatePhcCoordinates } from "../services/api";
 import { riskCategory } from "../utils/risk";
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
@@ -30,9 +30,11 @@ function loadGoogleMaps() {
 }
 
 function validCoordinates(row) {
+  if (row.lat == null || row.lng == null || String(row.lat).trim() === "" || String(row.lng).trim() === "") return false;
   const lat = Number(row.lat);
   const lng = Number(row.lng);
-  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0) &&
+    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 function showItem(item, index) {
@@ -41,7 +43,7 @@ function showItem(item, index) {
   return item.action || item.description || item.medicine || item.phc_name || item.risk || `Item ${index + 1}`;
 }
 
-export default function NationalMapPage() {
+export default function NationalMapPage({ permissions }) {
   const mapElement = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
@@ -55,6 +57,9 @@ export default function NationalMapPage() {
   const [mapRisk, setMapRisk] = useState("all");
   const [mapMedicine, setMapMedicine] = useState("all");
   const [selectedPhc, setSelectedPhc] = useState(null);
+  const [coordinateForm, setCoordinateForm] = useState({ lat: "", lng: "" });
+  const [coordinateSaving, setCoordinateSaving] = useState(false);
+  const [coordinateMessage, setCoordinateMessage] = useState(null);
   const [briefingDistrict, setBriefingDistrict] = useState("");
   const [briefing, setBriefing] = useState(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
@@ -114,6 +119,15 @@ export default function NationalMapPage() {
   const inventory = dashboard?.inventory || [];
   const medicines = [...new Set(inventory.map((row) => row.medicine_name).filter(Boolean))].sort();
   const districtKeys = [...new Map(inventory.filter((row) => row.district).map((row) => [`${row.state || ""}::${row.district}`, { key: `${row.state || ""}::${row.district}`, label: `${row.district}${row.state ? `, ${row.state}` : ""}` }])).values()];
+  const filteredMapRows = inventory
+    .filter((row) => mapDistrict === "all" || `${row.state || ""}::${row.district || ""}` === mapDistrict)
+    .filter((row) => mapMedicine === "all" || row.medicine_name === mapMedicine)
+    .filter((row) => mapRisk === "all" || riskCategory(row) === mapRisk);
+  const mapFacilityEntries = [...filteredMapRows.reduce((entries, row) => {
+    if (!entries.has(row.phc_id)) entries.set(row.phc_id, { phc: row, rows: [] });
+    entries.get(row.phc_id).rows.push(row);
+    return entries;
+  }, new Map()).values()];
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) return undefined;
@@ -150,9 +164,22 @@ export default function NationalMapPage() {
         content: pin,
         gmpClickable: true
       });
-      marker.addEventListener("gmp-click", () => setSelectedPhc({ ...entry, rows: sortedRows }));
+      marker.addEventListener("gmp-click", () => selectFacility({ ...entry, rows: sortedRows }));
       markersRef.current.push(marker);
     });
+
+    const activeFilters = mapDistrict !== "all" || mapMedicine !== "all" || mapRisk !== "all";
+    const locatedEntries = [...grouped.values()].filter((entry) => validCoordinates(entry.phc));
+    if (activeFilters && locatedEntries.length) {
+      const bounds = new window.google.maps.LatLngBounds();
+      locatedEntries.forEach(({ phc }) => bounds.extend({ lat: Number(phc.lat), lng: Number(phc.lng) }));
+      mapRef.current.fitBounds(bounds, 56);
+      if (locatedEntries.length === 1) {
+        const [{ phc }] = locatedEntries;
+        mapRef.current.setCenter({ lat: Number(phc.lat), lng: Number(phc.lng) });
+        mapRef.current.setZoom(9);
+      }
+    }
     return () => markersRef.current.forEach((marker) => { marker.map = null; });
   }, [dashboard, mapDistrict, mapMedicine, mapRisk, mapReady]);
 
@@ -209,6 +236,45 @@ export default function NationalMapPage() {
       setBriefingError("Unable to generate the district briefing. Please try again.");
     } finally {
       setBriefingLoading(false);
+    }
+  }
+
+  function selectFacility(entry) {
+    const rows = [...entry.rows].sort((left, right) => {
+      const order = { critical: 0, warning: 1, stable: 2 };
+      return order[riskCategory(left)] - order[riskCategory(right)];
+    });
+    setSelectedPhc({ ...entry, rows });
+    setCoordinateForm({
+      lat: validCoordinates(entry.phc) ? String(entry.phc.lat) : "",
+      lng: validCoordinates(entry.phc) ? String(entry.phc.lng) : ""
+    });
+    setCoordinateMessage(null);
+    if (mapRef.current && validCoordinates(entry.phc)) {
+      mapRef.current.panTo({ lat: Number(entry.phc.lat), lng: Number(entry.phc.lng) });
+      mapRef.current.setZoom(Math.max(mapRef.current.getZoom() || 0, 9));
+    }
+  }
+
+  async function handleSaveCoordinates() {
+    if (!selectedPhc || !permissions?.canManageDistricts) return;
+    setCoordinateSaving(true);
+    setCoordinateMessage(null);
+    try {
+      const location = await updatePhcCoordinates(selectedPhc.phc.phc_id, coordinateForm.lat, coordinateForm.lng);
+      const updatedPhc = { ...selectedPhc.phc, ...location };
+      const updatedRows = selectedPhc.rows.map((row) => ({ ...row, ...location }));
+      setSelectedPhc({ ...selectedPhc, phc: updatedPhc, rows: updatedRows });
+      setDashboard((current) => current ? {
+        ...current,
+        phcs: (current.phcs || []).map((phc) => phc.phc_id === location.phc_id ? { ...phc, ...location } : phc),
+        inventory: (current.inventory || []).map((row) => row.phc_id === location.phc_id ? { ...row, ...location } : row)
+      } : current);
+      setCoordinateMessage({ severity: "success", text: "PHC location saved; its map marker is now available." });
+    } catch (error) {
+      setCoordinateMessage({ severity: "error", text: error.message || "Could not save this PHC location." });
+    } finally {
+      setCoordinateSaving(false);
     }
   }
 
@@ -296,8 +362,58 @@ export default function NationalMapPage() {
                     <Typography variant="body2" sx={{ mt: 0.75 }}>Suggested next step: {riskCategory(row) === "stable" ? "Continue routine stock monitoring." : "Review this shortage and consider redistribution from an eligible surplus PHC."}</Typography>
                   </Box>
                 ))}
+                {!validCoordinates(selectedPhc.phc) && (
+                  <Box sx={{ mt: 1, pt: 1.5, borderTop: "1px solid #e2e9e4" }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Map location unavailable</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>This PHC has no valid coordinates, so it cannot be pinned on the map.</Typography>
+                    {permissions?.canManageDistricts ? (
+                      <Stack spacing={1}>
+                        <Stack direction="row" spacing={1}>
+                          <TextField label="Latitude" type="number" size="small" inputProps={{ min: -90, max: 90, step: "any" }} value={coordinateForm.lat} onChange={(event) => setCoordinateForm((current) => ({ ...current, lat: event.target.value }))} fullWidth />
+                          <TextField label="Longitude" type="number" size="small" inputProps={{ min: -180, max: 180, step: "any" }} value={coordinateForm.lng} onChange={(event) => setCoordinateForm((current) => ({ ...current, lng: event.target.value }))} fullWidth />
+                        </Stack>
+                        <Button variant="outlined" onClick={handleSaveCoordinates} disabled={coordinateSaving}>
+                          {coordinateSaving ? <CircularProgress size={17} /> : "Save PHC coordinates"}
+                        </Button>
+                        {coordinateMessage && <Alert severity={coordinateMessage.severity}>{coordinateMessage.text}</Alert>}
+                      </Stack>
+                    ) : <Typography variant="caption" color="text.secondary">Ask an Operations Manager to add this PHC's coordinates.</Typography>}
+                  </Box>
+                )}
               </Stack>
             ) : <Typography color="text.secondary">Select a marker to inspect its inventory and risk.</Typography>}
+            <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid #e2e9e4" }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.75 }}>
+                Facilities in view ({mapFacilityEntries.length})
+              </Typography>
+              <Stack spacing={0.5} sx={{ maxHeight: 240, overflowY: "auto" }}>
+                {mapFacilityEntries.map((entry) => {
+                  const hasCoordinates = validCoordinates(entry.phc);
+                  const highestRisk = [...entry.rows].sort((left, right) => {
+                    const order = { critical: 0, warning: 1, stable: 2 };
+                    return order[riskCategory(left)] - order[riskCategory(right)];
+                  })[0];
+                  return (
+                    <Button
+                      key={entry.phc.phc_id}
+                      type="button"
+                      onClick={() => selectFacility(entry)}
+                      sx={{ justifyContent: "space-between", gap: 1, px: 1, py: 0.75, color: "#24463e", textAlign: "left", textTransform: "none", border: "1px solid #e6ede7", borderRadius: 1 }}
+                    >
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>{entry.phc.phc_name || entry.phc.phc_id}</Typography>
+                        <Typography variant="caption" color="text.secondary" noWrap>{entry.phc.district || "District unavailable"}{entry.phc.state ? ` · ${entry.phc.state}` : ""}</Typography>
+                      </Box>
+                      <Stack alignItems="flex-end" sx={{ flex: "0 0 auto" }}>
+                        <Typography variant="caption" sx={{ color: RISK_COLORS[riskCategory(highestRisk)], fontWeight: 800, textTransform: "capitalize" }}>{riskCategory(highestRisk)}</Typography>
+                        {!hasCoordinates && <Typography variant="caption" color="text.secondary">No map pin</Typography>}
+                      </Stack>
+                    </Button>
+                  );
+                })}
+                {!mapFacilityEntries.length && <Typography variant="body2" color="text.secondary">No facilities match these filters.</Typography>}
+              </Stack>
+            </Box>
           </Paper>
         </Grid>
 
