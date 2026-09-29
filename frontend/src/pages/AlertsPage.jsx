@@ -23,6 +23,7 @@ function AlertsPage({ onTransferGenerated }) {
   const [transferNotice, setTransferNotice] = useState(null);
   const [alertExplanations, setAlertExplanations] = useState({});
   const [explanationLoadingKey, setExplanationLoadingKey] = useState("");
+  const [selectedLanguage, setSelectedLanguage] = useState("en");
 
   useEffect(() => {
     let active = true;
@@ -91,9 +92,18 @@ function AlertsPage({ onTransferGenerated }) {
 
     setExplanationLoadingKey(key);
     try {
-      const response = await explainAlert(row, "English");
-      const explanationText = response?.explanation || response?.phc_sms_message || "No clear explanation is available for this alert right now.";
-      setAlertExplanations((current) => ({ ...current, [key]: explanationText }));
+      const response = await explainAlert(
+        row,
+        {
+          source_phc_id: "NEARBY-SURPLUS-PHC",
+          quantity: 250,
+          distance_km: 18.4
+        },
+        "English"
+      );
+
+      const rawText = response?.explanation || response?.text || response?.phc_sms_message || "No clear explanation is available for this alert right now.";
+      setAlertExplanations((current) => ({ ...current, [key]: rawText }));
     } catch (requestError) {
       setAlertExplanations((current) => ({
         ...current,
@@ -135,9 +145,19 @@ function AlertsPage({ onTransferGenerated }) {
           <h1>Medicine alerts</h1>
           <p className="alerts-subtitle">Seven-day demand forecasts, grouped by facility area.</p>
         </div>
-        <button className="alerts-refresh" type="button" disabled={loading} onClick={() => setRefreshKey((key) => key + 1)}>
-          {loading ? "Loading..." : "Refresh alerts"}
-        </button>
+        <div className="alerts-heading-actions">
+          <label className="language-select-wrap">
+            <span>Language</span>
+            <select value={selectedLanguage} onChange={(event) => setSelectedLanguage(event.target.value)}>
+              <option value="en">English</option>
+              <option value="hi">Hindi</option>
+              <option value="ta">Tamil</option>
+            </select>
+          </label>
+          <button className="alerts-refresh" type="button" disabled={loading} onClick={() => setRefreshKey((key) => key + 1)}>
+            {loading ? "Loading..." : "Refresh alerts"}
+          </button>
+        </div>
       </section>
 
       {error && <div className="alerts-error" role="alert">{error}</div>}

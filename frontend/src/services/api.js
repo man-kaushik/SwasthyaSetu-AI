@@ -101,13 +101,18 @@ export async function explainAlert(alertData, recommendation = null, language = 
 
     const prompt = `You are an AI assistant for an Indian district health officer.
 
-Given this PHC medicine stock-out alert and transfer recommendation, generate:
-1. A short explanation of the risk.
-2. The recommended action.
-3. A message to send to the destination PHC officer.
-4. A message to send to the source PHC officer.
+Given this PHC medicine stock-out alert and transfer recommendation, generate a concise but practical operational explanation.
 
-Keep it concise and operational.
+Requirements:
+1. Explain the risk in plain, slightly human language.
+2. Mention how the system identifies the problem: low stock, high demand risk, and limited days remaining.
+3. Explain how the transfer plan works: find the nearest surplus PHC/source, compare the transfer distance and quantity, and recommend redistribution.
+4. Give the recommended action.
+5. Give a short message to the destination PHC officer.
+6. Give a short message to the source PHC officer.
+7. Generate the full answer in ${language}.
+
+Keep it brief, clear, and operational, like a field officer briefing.
 
 Data:
 ${JSON.stringify(payload, null, 2)}`;

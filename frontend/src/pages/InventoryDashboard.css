@@ -27,6 +27,8 @@
 .dashboard-heading h1 { margin: 0; color: #193330; font-size: 30px; font-weight: 750; line-height: 1.2; letter-spacing: 0; }
 .dashboard-subtitle { margin: 8px 0 0; color: #687a76; font-size: 14px; }
 .heading-actions { gap: 10px; }
+.overview-language-select { display: grid; gap: 4px; color: #657670; font-size: 10px; font-weight: 700; }
+.overview-language-select select { height: 35px; min-width: 120px; padding: 0 9px; border: 1px solid #dce5de; border-radius: 4px; background: #fbfcfb; color: #193330; font-size: 12px; }
 .source-tag { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid #dce7dd; border-radius: 4px; background: #fff; color: #405e48; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .source-dot { width: 7px; height: 7px; border-radius: 50%; background: #71807a; }
 .source-bigquery .source-dot { background: #2c995f; box-shadow: 0 0 0 3px #e3f4e9; }
@@ -50,10 +52,15 @@
 .inventory-toolbar { min-height: 78px; gap: 20px; padding: 16px 19px; border-bottom: 1px solid #e8eeea; }
 .inventory-toolbar h2 { margin: 0; color: #193330; font-size: 16px; font-weight: 750; letter-spacing: 0; }
 .inventory-toolbar p { margin: 4px 0 0; color: #84928d; font-size: 12px; }
+.dashboard-filters { display: flex; align-items: end; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
+.dashboard-filters label { display: grid; gap: 4px; color: #657670; font-size: 10px; font-weight: 700; }
+.dashboard-filters select,
+.dashboard-filters input { height: 35px; min-width: 120px; padding: 0 9px; border: 1px solid #dce5de; border-radius: 4px; outline: none; background: #fbfcfb; color: #193330; font-size: 12px; }
 .search-field { display: flex; align-items: center; gap: 9px; }
 .search-label { color: #657670; font-size: 12px; font-weight: 650; white-space: nowrap; }
-.search-field input { width: 220px; height: 36px; padding: 0 10px; border: 1px solid #dce5de; border-radius: 4px; outline: none; color: #193330; background: #fbfcfb; font-size: 12px; }
-.search-field input:focus { border-color: #41856b; box-shadow: 0 0 0 2px rgba(65, 133, 107, 0.12); }
+.search-field input { width: 220px; min-width: 220px; }
+.dashboard-filters select:focus,
+.dashboard-filters input:focus { border-color: #41856b; box-shadow: 0 0 0 2px rgba(65, 133, 107, 0.12); }
 .table-scroll { overflow-x: auto; }
 .inventory-table { width: 100%; min-width: 1120px; border-collapse: collapse; text-align: left; }
 .inventory-table th { height: 40px; padding: 0 15px; background: #f7f9f7; color: #6b7d76; font-size: 10px; font-weight: 750; text-transform: uppercase; }

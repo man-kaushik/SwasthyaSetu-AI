@@ -26,6 +26,10 @@ function InventoryDashboard({ onTransferGenerated }) {
   const [transferStatuses, setTransferStatuses] = useState({});
   const [planLoadingKey, setPlanLoadingKey] = useState("");
   const [transferNotice, setTransferNotice] = useState(null);
+  const [stateFilter, setStateFilter] = useState("all");
+  const [districtFilter, setDistrictFilter] = useState("all");
+  const [riskFilter, setRiskFilter] = useState("action");
+  const [selectedLanguage, setSelectedLanguage] = useState("en");
   const [aiLoadingKey, setAiLoadingKey] = useState("");
   const [aiExplanation, setAiExplanation] = useState({});
 
@@ -81,11 +85,25 @@ function InventoryDashboard({ onTransferGenerated }) {
   const inventory = dashboard?.inventory || [];
   const criticalCount = inventory.filter((row) => riskCategory(row) === "critical").length;
   const warningCount = inventory.filter((row) => riskCategory(row) === "warning").length;
-  const filteredInventory = inventory.filter((row) =>
-    `${row.phc_name} ${row.phc_id} ${row.district} ${row.medicine_name} ${row.medicine_id}`
-      .toLowerCase()
-      .includes(query.toLowerCase())
-  );
+  const states = [...new Set(inventory.map((row) => row.state).filter(Boolean))].sort();
+  const districts = [...new Set(inventory
+    .filter((row) => stateFilter === "all" || row.state === stateFilter)
+    .map((row) => row.district)
+    .filter(Boolean))].sort();
+
+  const filteredInventory = inventory
+    .filter((row) => stateFilter === "all" || row.state === stateFilter)
+    .filter((row) => districtFilter === "all" || row.district === districtFilter)
+    .filter((row) => {
+      if (riskFilter === "all") return true;
+      const risk = riskCategory(row);
+      return risk !== "stable";
+    })
+    .filter((row) =>
+      `${row.phc_name} ${row.phc_id} ${row.district} ${row.state} ${row.medicine_name} ${row.medicine_id}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
+    );
   const source = summary.data_source?.inventory_source || "unavailable";
   const pageCount = Math.max(1, Math.ceil(filteredInventory.length / 50));
   const currentPage = Math.min(page, pageCount - 1);
@@ -149,8 +167,8 @@ function InventoryDashboard({ onTransferGenerated }) {
         "English"
       );
 
-      const aiText = explanation?.explanation || explanation?.text || "AI-generated explanation unavailable.";
-      setAiExplanation((current) => ({ ...current, [rowKey]: aiText }));
+      const rawText = explanation?.explanation || explanation?.text || "AI-generated explanation unavailable.";
+      setAiExplanation((current) => ({ ...current, [rowKey]: rawText }));
     } catch (requestError) {
       setAiExplanation((current) => ({
         ...current,
@@ -170,6 +188,14 @@ function InventoryDashboard({ onTransferGenerated }) {
           <p className="dashboard-subtitle">Medicine availability across the primary health centre network.</p>
         </div>
         <div className="heading-actions">
+          <label className="overview-language-select">
+            <span>Language</span>
+            <select value={selectedLanguage} onChange={(event) => setSelectedLanguage(event.target.value)}>
+              <option value="en">English</option>
+              <option value="hi">Hindi</option>
+              <option value="ta">Tamil</option>
+            </select>
+          </label>
           <span className={`source-tag source-${source}`}>
             <span className="source-dot" />
             {source === "bigquery" ? "BigQuery live" : source === "memory" ? "Seed data" : source}
@@ -226,15 +252,38 @@ function InventoryDashboard({ onTransferGenerated }) {
             <h2>Stock-out risk by facility</h2>
             <p>{number(filteredInventory.length)} records</p>
           </div>
-          <label className="search-field">
-            <span className="search-label">Filter records</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => { setQuery(event.target.value); setPage(0); }}
-              placeholder="PHC, district or medicine"
-            />
-          </label>
+          <div className="dashboard-filters">
+            <label>
+              <span>State</span>
+              <select value={stateFilter} onChange={(event) => { setStateFilter(event.target.value); setDistrictFilter("all"); setPage(0); }}>
+                <option value="all">All states</option>
+                {states.map((state) => <option key={state} value={state}>{state}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>District</span>
+              <select value={districtFilter} onChange={(event) => { setDistrictFilter(event.target.value); setPage(0); }}>
+                <option value="all">All districts</option>
+                {districts.map((district) => <option key={district} value={district}>{district}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Risk</span>
+              <select value={riskFilter} onChange={(event) => { setRiskFilter(event.target.value); setPage(0); }}>
+                <option value="action">Needs attention</option>
+                <option value="all">All levels</option>
+              </select>
+            </label>
+            <label className="search-field">
+              <span className="search-label">Search</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => { setQuery(event.target.value); setPage(0); }}
+                placeholder="PHC, district or medicine"
+              />
+            </label>
+          </div>
         </div>
         {transferNotice && (
           <div className={`transfer-plan ${transferNotice.kind}`} role="status">

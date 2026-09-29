@@ -14,6 +14,9 @@
   align-items: center;
   justify-content: space-between;
 }
+.alerts-heading-actions { display: flex; align-items: center; gap: 12px; }
+.language-select-wrap { display: grid; gap: 4px; color: #657670; font-size: 10px; font-weight: 700; }
+.language-select-wrap select { height: 35px; min-width: 120px; padding: 0 9px; border: 1px solid #dce5de; border-radius: 4px; background: #fbfcfb; color: #193330; font-size: 12px; }
 .alerts-pagination { display: flex; align-items: center; gap: 8px; color: #687a76; white-space: nowrap; }
 .alerts-pagination .pagination-button { min-height: 30px; padding: 0 9px; border: 1px solid #dce5de; border-radius: 4px; background: #fff; color: #31564b; font-size: 11px; font-weight: 700; cursor: pointer; }
 .alerts-pagination .pagination-button:hover:not(:disabled) { border-color: #41856b; background: #f5faf6; }
