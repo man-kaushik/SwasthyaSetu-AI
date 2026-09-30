@@ -1,0 +1,81 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function roleForEmail(email) {
+      return email == "ms4055028@gmail.com" ? "operations" :
+        email == "juhi.batra25@gmail.com" ? "viewer" : "";
+    }
+
+    function isOperationsManager() {
+      return signedIn() && request.auth.token.email == "ms4055028@gmail.com";
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isOperationsManager());
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.role == roleForEmail(request.auth.token.email)
+        && request.resource.data.keys().hasOnly(["name", "email", "role", "location", "created_at", "updated_at"]);
+    }
+
+    match /transfer_requests/{requestId} {
+      allow read: if true;
+      allow create: if request.resource.data.requester_uid == "prototype-operations"
+        && request.resource.data.requester_email == "ms4055028@gmail.com"
+        && request.resource.data.status == "pending"
+        && request.resource.data.resource_type == "medicine"
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity > 0
+        && request.resource.data.priority in ["NORMAL", "HIGH", "URGENT"]
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.reason.size() <= 500
+        && request.resource.data.source_phc_id != request.resource.data.destination_phc_id
+        && request.resource.data.keys().hasOnly([
+          "requester_uid", "requester_email", "requester_name", "source_phc_id", "source_phc_name",
+          "destination_phc_id", "destination_phc_name", "resource_type", "medicine_id", "medicine_name",
+          "quantity", "priority", "reason", "status", "created_at"
+        ]);
+      allow update: if resource.data.status == "pending"
+        && request.resource.data.status in ["approved", "rejected"]
+        && request.resource.data.reviewed_by == "ms4055028@gmail.com"
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["status", "reviewed_by", "reviewed_at"]);
+    }
+
+    match /phcs/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+    match /districts/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+    match /medicines/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+    match /current_inventory/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+    match /inventory_history/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+    match /recommendations/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+    match /transfers/{documentId} {
+      allow read: if true;
+      allow create, update: if true;
+    }
+  }
+}

@@ -1,0 +1,37 @@
+Loaded 120 PHC inventory records from seed file.
+
+SwasthyaSetu AI smoke test -> http://127.0.0.1:56694
+
+---------------------------------------------------------------
+PASS  GET /health returns 200 + status ok  [200 ok]
+PASS  GET / lists all 7 required APIs  [GET /health | GET /meta | GET /dashboard | POST /phcUpdate | GET /alerts | POST /recommendation | POST /approveTransfer | POST /explainAlert | POST /translate]
+PASS  GET /meta returns 15 PHCs and 8 medicines  [15 PHCs / 8 medicines]
+PASS  GET /dashboard returns summary + inventory  [status 200, 120 records]
+PASS  GET /dashboard summary has district metrics  [{"total_phcs_monitored":15,"total_phc_directory":15,"total_medicine_records":120,"critical_stockouts":31,"potential_stockouts_7d":23,"beds_available":660,"doctors_on_duty":247,"nurses_on_duty":453,"patient_footfall_today":12210,"facility_staff_shortages":0,"approved_transfers":0,"records_scored_by_bigquery_ml":0,"data_source":{"bigquery":true,"firestore":false,"bigquery_forecast":false,"inventory_source":"bigquery","memory_fallback":false}}]
+PASS  POST /phcUpdate records telemetry  [status 200]
+PASS  POST /phcUpdate returns live risk preview  [{"days_remaining":1.8,"risk_level":"CRITICAL","safety_stock":100,"below_safety_stock":true}]
+PASS  POST /phcUpdate validates required fields (400)  [status 400]
+PASS  Telemetry from /phcUpdate appears on /dashboard  [stock=40, days=1.8]
+PASS  GET /alerts returns ranked alert feed  [65 alerts]
+PASS  GET /alerts covers stock-out, bed and staffing alert types  [{"STOCKOUT_CRITICAL":31,"STAFF_SURGE":9,"BED_CAPACITY_CRITICAL":2,"STOCKOUT_WARNING":23}]
+PASS  GET /alerts sorts CRITICAL first  [top severity CRITICAL]
+PASS  POST /recommendation proposes a donor transfer  [MH-PUNE-PHC-011 -> MH-PUNE-PHC-003, qty 180]
+PASS  Recommendation respects donor safety stock  [surplus 520, donor left 440]
+PASS  Recommendation has rationale + transit estimate  [1 h over 34.7 km]
+PASS  POST /recommendation works without filters (falls back to first record)  [status 200]
+PASS  POST /approveTransfer approves and dispatches  [dispatch DL-MED-6327]
+PASS  POST /approveTransfer moves stock to the deficit PHC  [{"source_phc_id":"MH-PUNE-PHC-011","destination_phc_id":"MH-PUNE-PHC-003","source_stock_before":620,"source_stock_after":440,"destination_stock_before":40,"destination_stock_after":220}]
+PASS  POST /approveTransfer accepts /recommendation field names (aliasing)  [source=MH-PUNE-PHC-011]
+PASS  POST /approveTransfer validates required fields (400)  [status 400]
+PASS  Approved transfer is counted on /dashboard  [approved_transfers=1]
+PASS  Dashboard reflects the transferred stock balance  [donor record present after transfer]
+PASS  POST /explainAlert returns officer briefing  [SwasthyaSetu AI Engine]
+PASS  POST /explainAlert flags urgency + translated note  [CRITICAL]
+PASS  POST /translate uses the medical phrase book  [Tamil: மருந்து பற்றாக்குறை எச்சரிக்கை]
+PASS  POST /translate never fails for unlisted text  [Passthrough (no translation provider configured)]
+PASS  POST /translate validates the text field (400)  [status 400]
+PASS  Unknown routes return JSON 404  [status 404]
+---------------------------------------------------------------
+Result: 28/28 checks passed.
+All API endpoints are working.
+

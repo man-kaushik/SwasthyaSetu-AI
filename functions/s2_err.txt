@@ -1,0 +1,2 @@
+◇ injected env (4) from .env
+Firestore save warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.

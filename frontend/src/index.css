@@ -1,0 +1,26 @@
+:root {
+  font-family: "Aptos", "Segoe UI", sans-serif;
+  color: #193330;
+  background: #f4f7f3;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-weight: 400;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button, input { font: inherit; }
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}

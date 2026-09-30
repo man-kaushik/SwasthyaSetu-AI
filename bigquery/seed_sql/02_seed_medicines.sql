@@ -1,0 +1,16 @@
+-- ==========================================================
+-- SwasthyaSetu AI: Direct Seed for Medicines (No CSV Upload Required)
+-- Paste and run this directly in BigQuery Query Editor
+-- ==========================================================
+CREATE OR REPLACE TABLE `swasthya_ai.medicines` AS
+SELECT * FROM UNNEST([
+  STRUCT<medicine_id STRING, medicine_name STRING, category STRING, unit STRING, safety_stock INT64, standard_daily_consumption INT64>
+  ('ORS', 'ORS Packets (Oral Rehydration)', 'Hydration', 'Packets', 100, 18),
+  ('PARACETAMOL_500', 'Paracetamol 500mg Tablets', 'Analgesic/Antipyretic', 'Strips (10s)', 200, 40),
+  ('AMOXICILLIN_500', 'Amoxicillin 500mg Capsules', 'Antibiotic', 'Strips (10s)', 150, 25),
+  ('AZITHROMYCIN_500', 'Azithromycin 500mg Tablets', 'Antibiotic', 'Strips (3s)', 80, 15),
+  ('METFORMIN_500', 'Metformin 500mg Tablets', 'Chronic Disease', 'Strips (10s)', 120, 22),
+  ('INSULIN_REGULAR', 'Insulin Regular (100IU/ml)', 'Cold Chain', 'Vials', 30, 5),
+  ('RABIES_VACCINE', 'Anti-Rabies Vaccine (ARV)', 'Cold Chain / Emergency', 'Vials', 25, 4),
+  ('OXYGEN_CYLINDER', 'Medical Oxygen D-Type', 'Critical Care', 'Cylinders', 8, 2)
+]);

@@ -1,0 +1,24 @@
+◇ injected env (2) from .env
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore save warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+◇ injected env (0) from .env
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Recommendation persist warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Transfer persist warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+◇ injected env (0) from .env
+BigQuery query skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+BigQuery enrichment skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+BigQuery query skipped: simulated BigQuery outage
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.

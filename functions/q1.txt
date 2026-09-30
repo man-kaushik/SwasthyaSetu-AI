@@ -1,0 +1,16 @@
+◇ injected env (4) from .env
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+BigQuery enrichment skipped: Not found: Table swasthyasetu-ai-7b4e6:swasthya_ai.stockout_risk was not found in location US
+Firestore save warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+BigQuery enrichment skipped: Not found: Table swasthyasetu-ai-7b4e6:swasthya_ai.stockout_risk was not found in location US
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Recommendation persist warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Recommendation persist warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Transfer persist warning: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+Firestore read fallback: 7 PERMISSION_DENIED: Missing or insufficient permissions.
+BigQuery enrichment skipped: Not found: Table swasthyasetu-ai-7b4e6:swasthya_ai.stockout_risk was not found in location US
+Cloud Translation unavailable, trying Gemini: Cloud Translation API has not been used in project 909865444847 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/translate.googleapis.com/overview?project=909865444847 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.
