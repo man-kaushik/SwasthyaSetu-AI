@@ -35,6 +35,7 @@ monthly query/storage limits; Apps Script also has per-user execution quotas.
 This path does not require Cloud Run, Cloud Build, Artifact Registry, or placing
 BigQuery credentials in frontend code.
 
-The current repository Firestore rules allow unauthenticated reads and writes
-for demo use. Do not use this configuration with real patient data; restrict
-rules and require operator authentication before production.
+Prototype mode allows unauthenticated reads and writes to operational Firestore
+collections so the public demo works without sign-in. Anyone with the app URL
+can modify demo inventory, districts, and transfers. Use synthetic data only;
+restore authenticated rules and disable `DEMO_MODE` before using real data.

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import './App.css';
 import {
   ThemeProvider,
@@ -10,14 +10,10 @@ import {
   Typography,
   Button,
   Chip,
-  Stack,
-  Alert,
-  CircularProgress
+  Stack
 } from '@mui/material';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from './firebase';
-import { getRoleForEmail, getRolePermissions, ROLE_DESCRIPTIONS, ROLE_LABELS } from './auth/roles';
+import { getRolePermissions } from './auth/roles';
+import { DEMO_USER } from './auth/demo';
 import InventoryDashboard from './pages/InventoryDashboard';
 import AlertsPage from './pages/AlertsPage';
 import TransferTrackingPage from './pages/TransferTrackingPage';
@@ -47,91 +43,13 @@ const theme = createTheme({
 
 function App() {
   const [currentView, setCurrentView] = useState('home');
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [signInPending, setSignInPending] = useState(false);
-  const [signOutPending, setSignOutPending] = useState(false);
-  const [authError, setAuthError] = useState('');
   const [emergencyState, setEmergencyState] = useState({
     scenario: 'normal',
     active: false,
     tickerVisible: false
   });
-  const permissions = getRolePermissions(profile?.role);
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!active) return;
-      setUser(firebaseUser);
-      setProfile(null);
-      setAuthError('');
-      setAuthLoading(true);
-      if (!firebaseUser) {
-        setAuthLoading(false);
-        return;
-      }
-
-      const email = String(firebaseUser.email || '').toLowerCase();
-      const role = getRoleForEmail(email);
-      if (!role) {
-        setAuthError('This Google account is not assigned an application role.');
-        setAuthLoading(false);
-        return;
-      }
-
-      try {
-        const profileRef = doc(db, 'users', firebaseUser.uid);
-        const existing = await getDoc(profileRef);
-        const existingData = existing.exists() ? existing.data() : {};
-        const now = new Date().toISOString();
-        const nextProfile = {
-          name: firebaseUser.displayName || email,
-          email,
-          role,
-          location: existingData.location || '',
-          created_at: existingData.created_at || now,
-          updated_at: now
-        };
-        await setDoc(profileRef, nextProfile, { merge: true });
-        if (active) setProfile({ uid: firebaseUser.uid, ...nextProfile });
-      } catch (error) {
-        console.error('Could not load the signed-in user role:', error);
-        if (active) setAuthError('Could not load your role profile. Check Firebase access and retry.');
-      } finally {
-        if (active) setAuthLoading(false);
-      }
-    });
-    return () => { active = false; unsubscribe(); };
-  }, []);
-
-  async function handleSignIn() {
-    setAuthError('');
-    setSignInPending(true);
-    try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
-    } catch (error) {
-      setAuthError(error.message || 'Google sign-in could not be completed.');
-    } finally {
-      setSignInPending(false);
-    }
-  }
-
-  async function handleSignOut() {
-    setAuthError('');
-    setSignOutPending(true);
-    try {
-      await signOut(auth);
-      setUser(null);
-      setProfile(null);
-      setCurrentView('home');
-    } catch (error) {
-      setAuthError(error.message || 'Could not sign out. Please try again.');
-    } finally {
-      setSignOutPending(false);
-    }
-  }
+  const profile = DEMO_USER;
+  const permissions = getRolePermissions(profile.role);
 
   function handleEmergencyScenarioChange(nextScenario) {
     const normalized = nextScenario || 'normal';
@@ -147,39 +65,6 @@ function App() {
   }
 
   const emergencyTickerText = buildEmergencyTickerText(null, emergencyState.scenario);
-
-  if (authLoading || (user && !profile && !authError)) {
-    return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'background.default' }}>
-          <Stack spacing={2} alignItems="center">
-            <CircularProgress size={28} />
-            <Typography color="text.secondary">Loading your dashboard...</Typography>
-          </Stack>
-        </Box>
-      </ThemeProvider>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', p: 2, bgcolor: 'background.default' }}>
-          <Box sx={{ width: 'min(420px, 100%)', p: { xs: 3, sm: 4 }, bgcolor: 'background.paper', border: '1px solid #dfe8e1', borderTop: '4px solid #1a554d', borderRadius: 1 }}>
-            <Typography variant="overline" sx={{ color: '#56805b', fontWeight: 800 }}>SWASTHYASETU AI</Typography>
-            <Typography variant="h4" sx={{ mt: 0.5, color: '#193330', fontWeight: 800 }}>Sign in</Typography>
-            <Typography sx={{ mt: 1, mb: 2.5, color: 'text.secondary' }}>Use your assigned account to open the health operations dashboard.</Typography>
-            {authError && <Alert severity="error" sx={{ mb: 2 }}>{authError}</Alert>}
-            <Button fullWidth variant="contained" onClick={user ? handleSignOut : handleSignIn} disabled={signInPending} sx={{ minHeight: 44, fontWeight: 750 }}>
-              {signInPending ? <CircularProgress size={19} sx={{ color: 'inherit' }} /> : user ? 'Use another account' : 'Sign in'}
-            </Button>
-          </Box>
-        </Box>
-      </ThemeProvider>
-    );
-  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -229,13 +114,7 @@ function App() {
               >
                 Add District
               </Button>}
-              <Box sx={{ flex: '0 0 126px', width: 126, pl: 1, borderLeft: '1px solid rgba(255,255,255,.28)', overflow: 'hidden' }}>
-                <Typography noWrap sx={{ color: 'white', fontSize: 11, fontWeight: 750 }}>{ROLE_LABELS[profile.role]}</Typography>
-                <Typography noWrap sx={{ color: 'rgba(255,255,255,.76)', fontSize: 9 }}>{ROLE_DESCRIPTIONS[profile.role]}</Typography>
-              </Box>
-              <Button onClick={handleSignOut} disabled={signOutPending} sx={{ flex: '0 0 auto', color: 'white', fontWeight: 700, minWidth: 74, px: 1 }}>
-                {signOutPending ? <CircularProgress size={15} sx={{ color: 'inherit' }} /> : 'Sign out'}
-              </Button>
+              <Chip label="Prototype Operations" size="small" sx={{ flex: '0 0 auto', bgcolor: 'rgba(255,255,255,.2)', color: 'white', fontWeight: 700 }} />
             </Stack>
           </Toolbar>
         </AppBar>
@@ -253,7 +132,6 @@ function App() {
               </button>
             </div>
           )}
-          {authError && <Alert severity="error" onClose={() => setAuthError('')}>{authError}</Alert>}
           {currentView === 'map'
             ? <NationalMapPage permissions={permissions} emergencyState={emergencyState} />
               : currentView === 'add-district'

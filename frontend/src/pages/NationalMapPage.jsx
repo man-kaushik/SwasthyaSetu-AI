@@ -61,6 +61,7 @@ export default function NationalMapPage({ permissions }) {
   const [coordinateSaving, setCoordinateSaving] = useState(false);
   const [coordinateMessage, setCoordinateMessage] = useState(null);
   const [briefingDistrict, setBriefingDistrict] = useState("");
+  const [briefingLanguage, setBriefingLanguage] = useState("English");
   const [briefing, setBriefing] = useState(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState("");
@@ -229,7 +230,7 @@ export default function NationalMapPage({ permissions }) {
         existing_recommendations: existingActions,
         data_limitations: rows.length ? [] : ["No inventory records were returned for this district."]
       };
-      const generated = await generateDistrictBriefing(context);
+      const generated = await generateDistrictBriefing(context, briefingLanguage);
       setBriefing({ ...generated, context });
     } catch (error) {
       console.error("District briefing generation failed:", error);
@@ -429,6 +430,14 @@ export default function NationalMapPage({ permissions }) {
                   <InputLabel>District</InputLabel>
                   <Select value={briefingDistrict} label="District" onChange={(event) => { setBriefingDistrict(event.target.value); setBriefing(null); }}>
                     {districtKeys.map((item) => <MenuItem key={item.key} value={item.key}>{item.label}</MenuItem>)}
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: { sm: 140 } }}>
+                  <InputLabel>Language</InputLabel>
+                  <Select value={briefingLanguage} label="Language" onChange={(event) => { setBriefingLanguage(event.target.value); setBriefing(null); }}>
+                    <MenuItem value="English">English</MenuItem>
+                    <MenuItem value="Hindi">Hindi</MenuItem>
+                    <MenuItem value="Tamil">Tamil</MenuItem>
                   </Select>
                 </FormControl>
                 <Button variant="contained" onClick={handleGenerateBriefing} disabled={briefingLoading || !briefingDistrict}>

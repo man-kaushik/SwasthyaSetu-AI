@@ -3,11 +3,14 @@ import {
   Alert, Box, Button, CircularProgress, Grid, Paper,
   Stack, TextField, Typography
 } from "@mui/material";
+import { auth } from "../firebase";
+import { getRoleForEmail } from "../auth/roles";
+import { DEMO_MODE, DEMO_USER } from "../auth/demo";
 import { getDashboardData, saveDistrictSupplies } from "../services/api";
 
 const blankSupply = () => ({ medicine_id: "", medicine_name: "", unit: "Units", current_stock: "", daily_consumption: "", safety_stock: "", category: "" });
 
-export default function AddDistrictPage({ user }) {
+export default function AddDistrictPage() {
   const [districtName, setDistrictName] = useState("");
   const [districtCode, setDistrictCode] = useState("");
   const [state, setState] = useState("");
@@ -18,6 +21,7 @@ export default function AddDistrictPage({ user }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const canSave = DEMO_MODE ? DEMO_USER.role === "operations" : getRoleForEmail(auth.currentUser?.email) === "operations";
 
   useEffect(() => {
     let active = true;
@@ -58,8 +62,8 @@ export default function AddDistrictPage({ user }) {
     event.preventDefault();
     setError("");
     setSuccess("");
-    if (!user) {
-      setError("Sign in with Google before adding district records.");
+    if (!canSave) {
+      setError("Prototype Operations access is disabled.");
       return;
     }
     const validationError = validate();
@@ -95,7 +99,7 @@ export default function AddDistrictPage({ user }) {
       setSupplies([blankSupply()]);
     } catch (saveError) {
       console.error("District save failed:", saveError);
-      setError("Could not save district and supplies. Check your sign-in and Firestore connection, then retry.");
+      setError("Could not save district and supplies. Check the Firestore connection and retry.");
     } finally {
       setSaving(false);
     }
@@ -109,7 +113,7 @@ export default function AddDistrictPage({ user }) {
         <Typography color="text.secondary">Save new PHC directory and inventory records to the existing Firestore collections.</Typography>
       </Box>
 
-      {!user && <Alert severity="info" sx={{ mb: 2 }}>Google sign-in is required to write application data. Sign in from the top navigation.</Alert>}
+      {!canSave && <Alert severity="info" sx={{ mb: 2 }}>Prototype Operations access is disabled.</Alert>}
       {loading && <Alert severity="info" sx={{ mb: 2 }}>Checking current PHC IDs to prevent duplicates…</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
@@ -156,7 +160,7 @@ export default function AddDistrictPage({ user }) {
             </Stack>
           </Paper>
           <Stack direction="row" justifyContent="flex-end">
-            <Button type="submit" variant="contained" size="large" disabled={!user || loading || saving} sx={{ minWidth: 190, fontWeight: 750 }}>
+            <Button type="submit" variant="contained" size="large" disabled={!canSave || loading || saving} sx={{ minWidth: 190, fontWeight: 750 }}>
               {saving ? <><CircularProgress size={18} sx={{ mr: 1, color: "inherit" }} />Saving records…</> : "Save district & supplies"}
             </Button>
           </Stack>

@@ -93,15 +93,7 @@ function AlertsPage({ onTransferGenerated, permissions }) {
     setExplanationLoadingKey(key);
     try {
       const languageName = selectedLanguage === "hi" ? "Hindi" : selectedLanguage === "ta" ? "Tamil" : "English";
-      const response = await explainAlert(
-        row,
-        {
-          source_phc_id: "NEARBY-SURPLUS-PHC",
-          quantity: 250,
-          distance_km: 18.4
-        },
-        languageName
-      );
+      const response = await explainAlert(row, null, languageName);
 
       const rawText = response?.explanation || response?.text || response?.phc_sms_message || "No clear explanation is available for this alert right now.";
       setAlertExplanations((current) => ({ ...current, [key]: rawText }));

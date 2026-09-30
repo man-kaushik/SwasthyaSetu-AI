@@ -15,10 +15,6 @@ service cloud.firestore {
       return signedIn() && request.auth.token.email == "ms4055028@gmail.com";
     }
 
-    function isAllowedUser() {
-      return signedIn() && roleForEmail(request.auth.token.email) != "";
-    }
-
     match /users/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || isOperationsManager());
       allow create, update: if signedIn()
@@ -29,11 +25,9 @@ service cloud.firestore {
     }
 
     match /transfer_requests/{requestId} {
-      allow read: if isOperationsManager() ||
-        (signedIn() && resource.data.requester_uid == request.auth.uid);
-      allow create: if isAllowedUser()
-        && request.resource.data.requester_uid == request.auth.uid
-        && request.resource.data.requester_email == request.auth.token.email
+      allow read: if true;
+      allow create: if request.resource.data.requester_uid == "prototype-operations"
+        && request.resource.data.requester_email == "ms4055028@gmail.com"
         && request.resource.data.status == "pending"
         && request.resource.data.resource_type == "medicine"
         && request.resource.data.quantity is int
@@ -48,41 +42,40 @@ service cloud.firestore {
           "destination_phc_id", "destination_phc_name", "resource_type", "medicine_id", "medicine_name",
           "quantity", "priority", "reason", "status", "created_at"
         ]);
-      allow update: if isOperationsManager()
-        && resource.data.status == "pending"
+      allow update: if resource.data.status == "pending"
         && request.resource.data.status in ["approved", "rejected"]
-        && request.resource.data.reviewed_by == request.auth.token.email
+        && request.resource.data.reviewed_by == "ms4055028@gmail.com"
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(["status", "reviewed_by", "reviewed_at"]);
     }
 
     match /phcs/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
     match /districts/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
     match /medicines/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
     match /current_inventory/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
     match /inventory_history/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
     match /recommendations/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
     match /transfers/{documentId} {
       allow read: if true;
-      allow write: if isOperationsManager();
+      allow create, update: if true;
     }
   }
 }

@@ -163,10 +163,6 @@ function InventoryDashboard({ onTransferGenerated, permissions, emergencyState =
     setAiLoadingKey(rowKey);
     setTransferNotice(null);
     try {
-      const sourcePhcId = row.source_phc_id || "NEARBY-SURPLUS-PHC";
-      const sourcePhcName = row.source_phc_name || "Nearby surplus PHC";
-      const transferQty = Number(row.recommended_transfer ?? row.quantity ?? 250) || 250;
-      const distanceKm = Number(row.distance_km ?? 18.4) || 18.4;
       const languageName = selectedLanguage === "hi" ? "Hindi" : selectedLanguage === "ta" ? "Tamil" : "English";
 
       const explanation = await explainAlert(
@@ -179,12 +175,7 @@ function InventoryDashboard({ onTransferGenerated, permissions, emergencyState =
           days_remaining: row.forecast_days_remaining ?? row.days_remaining,
           risk_level: riskCategory(row).toUpperCase()
         },
-        {
-          source_phc_id: sourcePhcId,
-          source_phc_name: sourcePhcName,
-          quantity: transferQty,
-          distance_km: distanceKm
-        },
+        null,
         languageName
       );
 

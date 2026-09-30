@@ -1,6 +1,7 @@
 import { auth, db } from "../firebase";
 import { collection, doc, getDoc, getDocs, limit, query, setDoc, addDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { getRoleForEmail } from "../auth/roles";
+import { DEMO_MODE, DEMO_USER } from "../auth/demo";
 import { buildEmergencyDataSummary, getEmergencyScenario } from "./emergency";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -8,9 +9,20 @@ const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
 let dashboardRequestSequence = 0;
 
 function requireOperationsManager() {
-  if (getRoleForEmail(auth.currentUser?.email) !== "operations") {
+  const role = DEMO_MODE ? DEMO_USER.role : getRoleForEmail(auth.currentUser?.email);
+  if (role !== "operations") {
     throw new Error("Only the Operations Manager can perform this action.");
   }
+}
+
+function getActiveRole() {
+  return DEMO_MODE ? DEMO_USER.role : getRoleForEmail(auth.currentUser?.email);
+}
+
+function isActiveUser(profile) {
+  return DEMO_MODE
+    ? profile?.uid === DEMO_USER.uid && profile?.email === DEMO_USER.email
+    : Boolean(auth.currentUser && profile?.uid === auth.currentUser.uid);
 }
 
 function requestAppsScript(route, parameters = {}) {
@@ -266,23 +278,36 @@ export function generateTransferRecommendation({ phc_id, medicine_id }) {
 }
 
 export async function explainAlert(alertData, recommendation = null, language = "English") {
-  if (API_BASE_URL) return postBackend("explainAlert", { alertData, recommendation, language });
-
   const phcName = alertData?.phc_name || alertData?.phc_id || "PHC";
   const medName = alertData?.medicine_name || alertData?.medicine_id || "medicine";
   const days = Number(alertData?.forecast_days_remaining ?? alertData?.days_remaining ?? 2);
-
-  return {
+  const fallback = {
+    source: "SwasthyaSetu rule-based fallback",
     explanation: `${phcName} is likely facing a shortage of ${medName}. The current stock may run out in about ${days} days, so it needs immediate attention.`,
     recommended_action: "Increase stock review and arrange quick replenishment or transfer from a nearby facility.",
     destination_phc_message: "Please prepare to receive the required medicine transfer by tomorrow.",
     source_phc_message: "Please dispatch the required stock to the requesting PHC urgently.",
     urgency: days <= 3 ? "CRITICAL" : "HIGH"
   };
+  if (!API_BASE_URL || !getActiveRole()) return fallback;
+  return postBackend("explainAlert", { alertData, recommendation, language });
 }
 
-export async function generateDistrictBriefing(districtSummary) {
-  return postBackend("districtBriefing", { districtSummary });
+export async function generateDistrictBriefing(districtSummary, language = "English") {
+  if (!getActiveRole()) {
+    return {
+      district: String(districtSummary?.district || "District"),
+      summary: `${districtSummary?.district || "The district"} has ${Number(districtSummary?.critical_alerts) || 0} critical and ${Number(districtSummary?.warning_alerts) || 0} warning alerts across ${Number(districtSummary?.phc_count) || 0} PHCs. Review the listed stock risks and existing recommendations before coordinating action.`,
+      criticalAlerts: Number(districtSummary?.critical_alerts) || 0,
+      warningAlerts: Number(districtSummary?.warning_alerts) || 0,
+      medicinesAtRisk: Array.isArray(districtSummary?.medicines_at_risk) ? districtSummary.medicines_at_risk : [],
+      stockoutRisks: Array.isArray(districtSummary?.stockout_risks) ? districtSummary.stockout_risks : [],
+      recommendedActions: Array.isArray(districtSummary?.existing_recommendations) ? districtSummary.existing_recommendations : [],
+      dataLimitations: Array.isArray(districtSummary?.data_limitations) ? districtSummary.data_limitations : [],
+      source: "rule-based fallback"
+    };
+  }
+  return postBackend("districtBriefing", { districtSummary, language });
 }
 
 export async function generateEmergencySummary({ dashboard, scenarioKey = "normal" }) {
@@ -318,8 +343,9 @@ export async function getTransferTrackingData() {
 }
 
 export async function createTransferRequest(request, userProfile) {
-  if (!userProfile?.uid || !userProfile?.email || !["operations", "viewer"].includes(userProfile.role)) {
-    throw new Error("Sign in with an assigned role before raising a transfer request.");
+  const activeRole = getActiveRole();
+  if (!isActiveUser(userProfile) || !activeRole) {
+    throw new Error("The prototype transfer-request identity is unavailable.");
   }
   const quantity = Number(request.quantity);
   if (!Number.isInteger(quantity) || quantity < 1) throw new Error("Enter a whole-number quantity greater than zero.");
@@ -352,9 +378,12 @@ export async function createTransferRequest(request, userProfile) {
 }
 
 export async function getTransferRequests(userProfile) {
-  if (!userProfile?.uid || !["operations", "viewer"].includes(userProfile.role)) return [];
+  const activeRole = getActiveRole();
+  if (!isActiveUser(userProfile) || !activeRole) {
+    throw new Error("The prototype transfer-request identity is unavailable.");
+  }
   const requests = collection(db, "transfer_requests");
-  const requestQuery = userProfile.role === "operations"
+  const requestQuery = activeRole === "operations"
     ? query(requests, limit(200))
     : query(requests, where("requester_uid", "==", userProfile.uid), limit(100));
   const snapshot = await getDocs(requestQuery);

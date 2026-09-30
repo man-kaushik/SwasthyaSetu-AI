@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { onRequest } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
 const fs = require("fs");
 const path = require("path");
 try {
@@ -48,6 +49,8 @@ if (runningOnCloud || firestoreExplicitCreds) {
 //   GOOGLE_CLOUD_PROJECT / BQ_DATASET : enables BigQuery-powered risk enrichment
 // ---------------------------------------------------------------------------
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
+const GEMINI_API_KEY_SECRET = defineSecret("GEMINI_API_KEY");
+const DEMO_MODE = process.env.DEMO_MODE !== "false";
 const BQ_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "";
 const BQ_DATASET = process.env.BQ_DATASET || "swasthya_ai";
 const BQ_LOCATION = process.env.BQ_LOCATION || "US";
@@ -779,6 +782,10 @@ app.use((req, res, next) => {
 });
 
 async function requireAssignedUser(req, res, next) {
+  if (DEMO_MODE) {
+    req.authUser = { uid: "prototype-operations", email: "ms4055028@gmail.com", role: "operations", demo: true };
+    return next();
+  }
   const authorization = String(req.get("authorization") || "");
   const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   if (!idToken) return res.status(401).json({ error: "Sign in with an assigned role to perform this action." });
@@ -797,6 +804,10 @@ async function requireAssignedUser(req, res, next) {
 }
 
 async function requireOperationsManager(req, res, next) {
+  if (DEMO_MODE) {
+    req.authUser = { uid: "prototype-operations", email: "ms4055028@gmail.com", role: "operations", demo: true };
+    return next();
+  }
   const authorization = String(req.get("authorization") || "");
   const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   if (!idToken) return res.status(401).json({ error: "Sign in as an Operations Manager to perform this action." });
@@ -1521,20 +1532,21 @@ app.post("/approveTransfer", requireOperationsManager, async (req, res) => {
 // POST /explainAlert
 app.post("/explainAlert", requireAssignedUser, async (req, res) => {
   try {
-    const { alertData, language = "English" } = req.body || {};
+    const { alertData, recommendation = null, language = "English" } = req.body || {};
 
     if (GEMINI_API_KEY) {
       try {
         const prompt = `
-You are an AI assistant for a District Health Officer in India.
-Analyze this health resource alert data:
-${JSON.stringify(alertData, null, 2)}
+You are an operational assistant for a District Health Officer in India. Explain the risk using only the verified alert and recommendation data below.
+Verified data:
+${JSON.stringify({ alertData, recommendation }, null, 2)}
+      Do not invent or assume a donor PHC, available stock, transfer quantity, distance, delivery time, root cause, or approval. Never say or imply that a transfer was dispatched, approved, or completed unless that exact status is present in the verified data. Recommendations must be phrased as proposed actions, not completed actions. If the data does not establish a detail, say it is unknown or omit it. Write all narrative values in ${language}; use Devanagari script for Hindi and Tamil script for Tamil, not Romanized transliteration. Preserve IDs, medicine names, and numeric values as supplied.
 Output valid JSON with keys:
-- "explanation": Crisp 2-sentence diagnostic of the stockout risk.
-- "root_cause": Likely cause (outbreak surge, supply delay, cold-chain, staffing).
-- "action_recommendation": Concrete supply chain redistribution action.
-- "phc_sms_message": Short SMS/WhatsApp dispatch note for the PHC Medical Officer.
-- "local_language_message": The same note translated into ${language}.
+- "explanation": A concise diagnostic of the stock risk, grounded in supplied facts.
+- "root_cause": A supported cause, or "Insufficient data to determine".
+- "action_recommendation": A proposed next step; never claim it has been executed.
+- "phc_sms_message": A concise message asking the PHC to review or coordinate action; do not claim dispatch.
+- "local_language_message": The same proposed-action message in ${language}.
 - "urgency": One of CRITICAL, HIGH, MEDIUM, LOW.
 Return ONLY the JSON object, no markdown fences.`;
         const { text, model } = await askGemini(prompt);
@@ -1558,10 +1570,10 @@ Return ONLY the JSON object, no markdown fences.`;
     };
 
     res.json({
-      source: "SwasthyaSetu AI Engine",
+      source: "SwasthyaSetu AI Engine (rule-based fallback)",
       explanation: `${phcName} is facing a severe deficit of ${medName} with only ${days} days of inventory remaining amidst high patient footfall (${footfall} patients/day).`,
-      action_recommendation: `Initiate automated cross-district transfer of 250-300 units from nearby surplus depot to prevent complete stockout.`,
-      phc_sms_message: `URGENT: Stockout alert for ${medName} at ${phcName}. Buffer replenishment dispatched. Current stock expected to deplete in ${days} days.`,
+      action_recommendation: `Review nearby facility stock and arrange replenishment for ${phcName}; confirm the donor, quantity, and timing before dispatch.`,
+      phc_sms_message: `URGENT: ${medName} stock at ${phcName} may last about ${days} days. Please review local availability and coordinate replenishment; confirm dispatch details before advising patients.`,
       local_language_message: fallbackTranslations[language] || fallbackTranslations.Hindi,
       urgency: days <= 3 ? "CRITICAL" : "HIGH"
     });
@@ -1572,6 +1584,8 @@ Return ONLY the JSON object, no markdown fences.`;
 
 app.post("/districtBriefing", requireAssignedUser, async (req, res) => {
   const summary = req.body?.districtSummary;
+  const requestedLanguage = String(req.body?.language || "English");
+  const language = ["English", "Hindi", "Tamil"].includes(requestedLanguage) ? requestedLanguage : "English";
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
     return res.status(400).json({ error: "Missing district summary." });
   }
@@ -1591,7 +1605,7 @@ app.post("/districtBriefing", requireAssignedUser, async (req, res) => {
   if (!apiKey) return res.json(fallback);
 
   try {
-    const prompt = `You are generating an operational district briefing from verified application data. Use only the supplied data. Do not invent PHCs, quantities, stock levels, days remaining, statistics, trends, or actions. If information is unavailable, explicitly state that it is unavailable.\n\nReturn one valid JSON object with these keys: district, summary, criticalAlerts, warningAlerts, medicinesAtRisk, stockoutRisks, recommendedActions, dataLimitations. Keep every number and recommendation grounded in the provided summary. Preserve the supplied counts exactly. recommendedActions are suggestions only, not approved or executed actions.\n\nVerified district data:\n${JSON.stringify(summary)}`;
+    const prompt = `You are generating an operational district briefing from verified application data. Write the summary and all narrative text in ${language}. Keep medicine names, PHC names, IDs, JSON keys, and numeric values unchanged. Use only the supplied data. Do not invent PHCs, quantities, stock levels, days remaining, statistics, trends, or actions. If information is unavailable, explicitly state that it is unavailable.\n\nReturn one valid JSON object with these keys: district, summary, criticalAlerts, warningAlerts, medicinesAtRisk, stockoutRisks, recommendedActions, dataLimitations. Keep every number and recommendation grounded in the provided summary. Preserve the supplied counts exactly. recommendedActions are suggestions only, not approved or executed actions.\n\nVerified district data:\n${JSON.stringify(summary)}`;
     const { text, model } = await askGemini(prompt);
     const jsonText = text.replace(/```json/g, "").replace(/```/g, "").trim().match(/\{[\s\S]*\}/)?.[0];
     const briefing = jsonText ? JSON.parse(jsonText) : null;
@@ -1754,6 +1768,7 @@ exports.api = onRequest({
   region: "us-central1",
   maxInstances: 3,
   timeoutSeconds: 60,
-  memory: "512MiB"
+  memory: "512MiB",
+  secrets: [GEMINI_API_KEY_SECRET]
 }, app);
 
