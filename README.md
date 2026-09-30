@@ -58,11 +58,38 @@ fallback when AI is unavailable.
 
 For a ready-to-read recording walkthrough, see [docs/demo_script.md](docs/demo_script.md).
 
+## Current prototype access
+
+The frontend is currently configured for demo mode. It opens directly as the
+**Prototype Operations Manager**, so the dashboard, alerts, transfers, national
+map, emergency simulation, and district setup flows can be demonstrated without
+a sign-in screen. The prototype operations profile has permission to manage
+districts, generate transfer plans, and approve transfers.
+
+The application still defines two role profiles for the authenticated version:
+**Operations Manager** and **Response Viewer**. Viewer access is read-oriented;
+it can monitor the dashboard and alerts and raise transfer requests, but cannot
+update stock, manage districts, generate plans, or approve transfers. Demo mode
+should be disabled before using the application as a production system.
+
+## Run the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev             # start the Vite development server
+npm run build           # create a production build
+npm run lint            # run Oxlint
+```
+
+The frontend uses the Firebase configuration in `frontend/src/firebase.js` and
+the API/data-source settings described below. Google Maps features require a
+configured Maps JavaScript API key.
+
 ---
 
 ## API data sources (read path)
 
-The no-billing dashboard endpoint in `apps-script/Code.gs` reads BigQuery directly
 The Apps Script endpoint in `apps-script/Code.gs` serves the hosted dashboard's
 read-only BigQuery data. The Express API in `functions/` remains the full local
 API implementation and can be deployed separately to Cloud Run when billing is
